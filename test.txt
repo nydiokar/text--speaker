@@ -1,0 +1,3 @@
+Hello! This is a test of the text-to-speech system. 
+If you can hear this message, the system is working correctly.
+Thank you for using Speaker AI!
