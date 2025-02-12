@@ -26,14 +26,15 @@ export class MenuInterface {
   }
 
   private async showMainMenu(): Promise<void> {
+    await this.speechService.stop(); // Ensure any previous playback is stopped
+
     console.log('\nWhat would you like to do?');
     console.log('1. Read a text file');
     console.log('2. Read web content');
     console.log('3. Read specific text');
-    console.log('4. List available voices');
-    console.log('5. Exit');
+    console.log('4. Exit');
 
-    const choice = await this.question('Enter your choice (1-5): ');
+    const choice = await this.question('Enter your choice (1-4): ');
     
     switch (choice) {
       case '1':
@@ -46,9 +47,6 @@ export class MenuInterface {
         await this.handleDirectText();
         break;
       case '4':
-        await this.listVoices();
-        break;
-      case '5':
         this.rl.close();
         process.exit(0);
         break;
@@ -59,86 +57,93 @@ export class MenuInterface {
   }
 
   private async handleFileReading(): Promise<void> {
-    const filePath = await this.question('Enter the path to your text file: ');
-    const voice = await this.selectVoice();
-    
     try {
+      const filePath = await this.question('Enter the path to your text file: ');
+      const voice = await this.selectVoiceFromList();
       const content = await this.fileReader.readTextFile(filePath);
-      const player = new PlayerInterface(this.speechService);
-      console.log('\nStarting playback...\n');
-      await Promise.all([
-        this.speechService.speak(content, voice),
-        player.startInteractiveMode()
-      ]);
+      await this.handlePlayback(content, voice);
     } catch (error) {
       console.error('Error:', error instanceof Error ? error.message : String(error));
     }
-
-    await this.showMainMenu();
   }
 
   private async handleWebReading(): Promise<void> {
-    const url = await this.question('Enter the webpage URL: ');
-    const voice = await this.selectVoice();
-    
     try {
+      // Get URL and voice selection first
+      const url = await this.question('Enter the webpage URL: ');
+      const voice = await this.selectVoiceFromList();
+      
+      // Fetch content before starting playback
       console.log('\nFetching webpage content...');
       const content = await this.webReader.readWebPage(url);
-      const player = new PlayerInterface(this.speechService);
-      console.log('Starting playback...\n');
-      await Promise.all([
-        this.speechService.speak(content, voice),
-        player.startInteractiveMode()
-      ]);
+      
+      await this.handlePlayback(content, voice);
     } catch (error) {
       console.error('Error:', error instanceof Error ? error.message : String(error));
     }
-
-    await this.showMainMenu();
   }
 
   private async handleDirectText(): Promise<void> {
-    const text = await this.question('Enter the text you want to read: ');
-    const voice = await this.selectVoice();
-    
     try {
-      const player = new PlayerInterface(this.speechService);
-      console.log('\nStarting playback...\n');
-      await Promise.all([
-        this.speechService.speak(text, voice),
-        player.startInteractiveMode()
-      ]);
+      const text = await this.question('Enter the text you want to read: ');
+      const voice = await this.selectVoiceFromList();
+      await this.handlePlayback(text, voice);
     } catch (error) {
       console.error('Error:', error instanceof Error ? error.message : String(error));
     }
-
-    await this.showMainMenu();
   }
 
-  private async listVoices(): Promise<void> {
+  private async handlePlayback(content: string, voice: string): Promise<void> {
+    console.log('\nStarting playback...\n');
+    const player = new PlayerInterface(this.speechService);
+
+    try {
+      // Start the player interface first
+      const playerPromise = player.startInteractiveMode();
+      
+      // Start speech after a short delay to ensure player is ready
+      await new Promise(resolve => setTimeout(resolve, 100));
+      const speechPromise = this.speechService.speak(content, voice);
+
+      // Wait for both to complete
+      await Promise.all([
+        playerPromise,
+        speechPromise
+      ]).catch(async (error) => {
+        // Ensure speech is stopped on error
+        await this.speechService.stop();
+        throw error;
+      });
+    } catch (error) {
+      console.error('Error during playback:', error);
+    } finally {
+      // Small delay before showing menu to ensure cleanup is complete
+      await new Promise(resolve => setTimeout(resolve, 500));
+      await this.showMainMenu();
+    }
+  }
+
+  private async selectVoiceFromList(): Promise<string> {
     try {
       const voices = await this.speechService.getVoices();
       console.log('\nAvailable voices:');
       voices.forEach((voice, index) => {
         console.log(`${index + 1}. ${voice.name} (${voice.gender}, ${voice.culture})`);
       });
+
+      while (true) {
+        const selection = await this.question('\nSelect a voice number: ');
+        const index = parseInt(selection, 10) - 1;
+        
+        if (index >= 0 && index < voices.length) {
+          return voices[index].name;
+        }
+        console.log('Invalid selection. Please try again.');
+      }
     } catch (error) {
       console.error('Error:', error instanceof Error ? error.message : String(error));
+      process.exit(1);
     }
-
-    await this.showMainMenu();
-  }
-
-  private async selectVoice(): Promise<string | undefined> {
-    const useVoice = await this.question('Would you like to select a specific voice? (y/N): ');
-    
-    if (useVoice.toLowerCase() === 'y') {
-      await this.listVoices();
-      const voiceName = await this.question('Enter the name of the voice to use: ');
-      return voiceName;
-    }
-
-    return undefined;
   }
 
   private question(query: string): Promise<string> {

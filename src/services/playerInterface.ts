@@ -2,18 +2,15 @@ import * as readline from 'readline';
 import { SpeechService } from './speechService';
 
 export class PlayerInterface {
-  private rl: readline.Interface;
   private speechService: SpeechService;
+  private isActive: boolean = true;
 
   constructor(speechService: SpeechService) {
     this.speechService = speechService;
-    this.rl = readline.createInterface({
-      input: process.stdin,
-      output: process.stdout
-    });
   }
 
   public async startInteractiveMode(): Promise<void> {
+    this.isActive = true;
     console.log('\nPlayback Controls:');
     console.log('  [space] - Pause/Resume');
     console.log('  [←] or [b] - Rewind');
@@ -26,17 +23,31 @@ export class PlayerInterface {
       process.stdin.setRawMode(true);
     }
 
-    process.stdin.on('keypress', async (str, key) => {
-      if (key.ctrl && key.name === 'c') {
-        await this.quit();
-      } else {
-        await this.handleKeyPress(str, key);
-      }
+    return new Promise<void>((resolve) => {
+      const keypressHandler = async (str: string, key: any) => {
+        if ((key.ctrl && key.name === 'c') || key.name === 'q') {
+          await this.quit();
+          cleanup();
+          resolve();
+        } else {
+          await this.handleKeyPress(str, key);
+        }
+      };
+
+      const cleanup = () => {
+        process.stdin.removeListener('keypress', keypressHandler);
+        if (process.stdin.isTTY) {
+          process.stdin.setRawMode(false);
+        }
+        this.isActive = false;
+      };
+
+      process.stdin.on('keypress', keypressHandler);
     });
   }
 
   private async handleKeyPress(str: string | undefined, key: any): Promise<void> {
-    if (!key) return;
+    if (!key || !this.isActive) return;
 
     switch (key.name) {
       case 'space':
@@ -73,9 +84,9 @@ export class PlayerInterface {
   }
 
   private async quit(): Promise<void> {
+    if (!this.isActive) return;
     console.log('\nStopping playback...');
+    this.isActive = false;
     await this.speechService.stop();
-    this.rl.close();
-    process.exit(0);
   }
 }
