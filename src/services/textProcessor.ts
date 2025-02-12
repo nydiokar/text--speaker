@@ -5,55 +5,49 @@ export interface TextSegment {
 }
 
 export class TextProcessor {
-  private static readonly DEFAULT_PAUSE = 500;
-  private static readonly LIST_PAUSE = 800;
-  private static readonly ENUMERATION_PAUSE = 600;
+  private static readonly DEFAULT_PAUSE = 300; // Reduced pause
+  private static readonly LIST_PAUSE = 500;
+  private static readonly ENUMERATION_PAUSE = 400;
 
   public static processText(text: string): TextSegment[] {
     const segments: TextSegment[] = [];
-    const lines = text.split(/\n/);
+    // Split by paragraphs first
+    const paragraphs = text.split(/\n\s*\n/);
     
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i].trim();
-      if (!line) continue;
+    for (const paragraph of paragraphs) {
+      if (!paragraph.trim()) continue;
 
-      // Handle bullet points and numbered lists
-      if (line.match(/^[\s]*[•\-\*][\s]+/)) {
-        // Bullet point list
+      // Handle lists
+      if (paragraph.match(/^[\s]*[•\-\*][\s]+/m)) {
         segments.push({
           type: 'list-item',
-          content: line.replace(/^[\s]*[•\-\*][\s]+/, '').trim(),
+          content: paragraph.trim(),
           pauseAfter: this.LIST_PAUSE
         });
-      } else if (line.match(/^[\s]*\d+[\.)]\s+/)) {
-        // Numbered list
-        segments.push({
-          type: 'list-item',
-          content: line.replace(/^[\s]*\d+[\.)]\s+/, '').trim(),
-          pauseAfter: this.LIST_PAUSE
-        });
-      } else if (line.match(/^[\s]*[a-z][\.)]\s+/i)) {
-        // Alphabetical list
+        continue;
+      }
+
+      // Handle enumeration
+      if (paragraph.match(/^[\s]*[a-z][\.)]\s+/i)) {
         segments.push({
           type: 'enumeration',
-          content: line.replace(/^[\s]*[a-z][\.)]\s+/i, '').trim(),
+          content: paragraph.trim(),
           pauseAfter: this.ENUMERATION_PAUSE
         });
-      } else {
-        // Regular sentences
-        const sentenceSegments = line
-          .replace(/([.?!])\s+/g, '$1|')
-          .split('|')
-          .map(s => s.trim())
-          .filter(s => s.length > 0)
-          .map(s => ({
-            type: 'sentence' as const,
-            content: s,
-            pauseAfter: this.DEFAULT_PAUSE
-          }));
-        
-        segments.push(...sentenceSegments);
+        continue;
       }
+
+      // Handle longer sentences by splitting on major punctuation
+      const sentences = paragraph
+        .split(/(?<=[.!?])\s+(?=[A-Z])/)
+        .filter(s => s.trim().length > 0)
+        .map(s => ({
+          type: 'sentence' as const,
+          content: s.trim(),
+          pauseAfter: this.DEFAULT_PAUSE
+        }));
+      
+      segments.push(...sentences);
     }
 
     return segments;

@@ -33,7 +33,6 @@ program
   .action(async () => {
     try {
       const voices = await speechService.getVoices();
-      console.log('\nAvailable voices:');
       voices.forEach(voice => {
         console.log(`- Name: ${voice.name}`);
         console.log(`  Culture: ${voice.culture}`);
@@ -101,9 +100,9 @@ program
   .command('resume')
   .description('Resume speech synthesis')
   .option('-v, --voice <name>', 'Voice to use (get names from "voices" command)')
-  .action(async (options: { voice?: string }) => {
+  .action(async () => {
     try {
-      await speechService.resume(options.voice);
+      await speechService.resume();
       console.log('Speech synthesis resumed');
     } catch (error) {
       console.error('Error:', error instanceof Error ? error.message : String(error));
@@ -116,9 +115,9 @@ program
   .description('Rewind speech by specified number of sentences')
   .argument('[sentences]', 'Number of sentences to rewind', '1')
   .option('-v, --voice <name>', 'Voice to use (get names from "voices" command)')
-  .action(async (sentences: string, options: { voice?: string }) => {
+  .action(async (sentences: string) => {
     try {
-      await speechService.rewind(parseInt(sentences, 10), options.voice);
+      await speechService.rewind(parseInt(sentences, 10));
       console.log(`Rewound ${sentences} sentence(s)`);
     } catch (error) {
       console.error('Error:', error instanceof Error ? error.message : String(error));
@@ -131,9 +130,9 @@ program
   .description('Forward speech by specified number of sentences')
   .argument('[sentences]', 'Number of sentences to forward', '1')
   .option('-v, --voice <name>', 'Voice to use (get names from "voices" command)')
-  .action(async (sentences: string, options: { voice?: string }) => {
+  .action(async (sentences: string) => {
     try {
-      await speechService.forward(parseInt(sentences, 10), options.voice);
+      await speechService.forward(parseInt(sentences, 10));
       console.log(`Forwarded ${sentences} sentence(s)`);
     } catch (error) {
       console.error('Error:', error instanceof Error ? error.message : String(error));
@@ -145,9 +144,9 @@ program
   .command('replay')
   .description('Replay current sentence')
   .option('-v, --voice <name>', 'Voice to use (get names from "voices" command)')
-  .action(async (options: { voice?: string }) => {
+  .action(async () => {
     try {
-      await speechService.replay(options.voice);
+      await speechService.replay();
       console.log('Replaying current sentence');
     } catch (error) {
       console.error('Error:', error instanceof Error ? error.message : String(error));

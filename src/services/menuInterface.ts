@@ -28,31 +28,34 @@ export class MenuInterface {
   private async showMainMenu(): Promise<void> {
     await this.speechService.stop(); // Ensure any previous playback is stopped
 
-    console.log('\nWhat would you like to do?');
-    console.log('1. Read a text file');
-    console.log('2. Read web content');
-    console.log('3. Read specific text');
-    console.log('4. Exit');
+    while (true) {
+      console.log('\nMain Menu:');
+      console.log('1. Read a text file');
+      console.log('2. Read web content');
+      console.log('3. Read specific text');
+      console.log('4. Exit');
 
-    const choice = await this.question('Enter your choice (1-4): ');
-    
-    switch (choice) {
-      case '1':
-        await this.handleFileReading();
-        break;
-      case '2':
-        await this.handleWebReading();
-        break;
-      case '3':
-        await this.handleDirectText();
-        break;
-      case '4':
-        this.rl.close();
-        process.exit(0);
-        break;
-      default:
-        console.log('Invalid choice. Please try again.');
-        await this.showMainMenu();
+      const choice = await this.question('Enter your choice (1-4): ');
+      
+      switch (choice) {
+        case '1':
+          await this.handleFileReading();
+          break;
+        case '2':
+          await this.handleWebReading();
+          break;
+        case '3':
+          await this.handleDirectText();
+          break;
+        case '4':
+          this.rl.close();
+          process.exit(0);
+          break;
+        default:
+          console.log('Invalid choice. Please try again.');
+          continue;
+      }
+      break;
     }
   }
 
@@ -93,40 +96,43 @@ export class MenuInterface {
     }
   }
 
-  private async handlePlayback(content: string, voice: string): Promise<void> {
+  private async handlePlayback(content: string, voice: string | undefined): Promise<void> {
     console.log('\nStarting playback...\n');
     const player = new PlayerInterface(this.speechService);
 
     try {
-      // Start the player interface first
-      const playerPromise = player.startInteractiveMode();
-      
-      // Start speech after a short delay to ensure player is ready
-      await new Promise(resolve => setTimeout(resolve, 100));
-      const speechPromise = this.speechService.speak(content, voice);
+        // Only pass voice if it's valid
+        const validVoice = voice && voice !== 'undefined' ? voice : undefined;
+        
+        // Start the player interface first
+        const playerPromise = player.startInteractiveMode();
+        
+        // Start speech after a short delay to ensure player is ready
+        await new Promise(resolve => setTimeout(resolve, 100));
+        const speechPromise = this.speechService.speak(content, validVoice);
 
-      // Wait for both to complete
-      await Promise.all([
-        playerPromise,
-        speechPromise
-      ]).catch(async (error) => {
-        // Ensure speech is stopped on error
-        await this.speechService.stop();
-        throw error;
-      });
+        // Wait for both to complete
+        await Promise.all([
+            playerPromise,
+            speechPromise
+        ]).catch(async (error) => {
+            // Ensure speech is stopped on error
+            await this.speechService.stop();
+            throw error;
+        });
     } catch (error) {
-      console.error('Error during playback:', error);
+        console.error('Error during playback:', error);
     } finally {
-      // Small delay before showing menu to ensure cleanup is complete
-      await new Promise(resolve => setTimeout(resolve, 500));
-      await this.showMainMenu();
+        // Small delay before showing menu to ensure cleanup is complete
+        await new Promise(resolve => setTimeout(resolve, 500));
+        await this.showMainMenu();
     }
   }
 
   private async selectVoiceFromList(): Promise<string> {
     try {
       const voices = await this.speechService.getVoices();
-      console.log('\nAvailable voices:');
+  
       voices.forEach((voice, index) => {
         console.log(`${index + 1}. ${voice.name} (${voice.gender}, ${voice.culture})`);
       });

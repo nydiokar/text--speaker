@@ -74,7 +74,7 @@ export class PlayerInterface {
 
       case 'r':
         console.log('\nReplaying current segment...');
-        await this.speechService.replay();
+        await this.speechService.replay(); 
         break;
 
       case 'q':
