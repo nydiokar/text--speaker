@@ -101,7 +101,6 @@ export class SpeechService {
           if (code === 0) {
             try {
               const voices = JSON.parse(stdout.trim() || '[]');
-              console.log('Found voices:', voices); // Debug log
               if (voices.length === 0) {
                 console.warn('No voices found');
               }

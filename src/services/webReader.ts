@@ -1,111 +1,118 @@
 import axios from 'axios';
 import * as cheerio from 'cheerio';
-import { Element } from 'domhandler';
 
 export class WebReader {
   public async readWebPage(url: string): Promise<string> {
     try {
-      console.log('Fetching webpage:', url);
+      console.log('Fetching content from:', url);
+      
+      // First check if it's a Google Doc
+      if (url.includes('docs.google.com')) {
+        return await this.readGoogleDoc(url);
+      }
+
+      // Original web scraping logic remains intact
       const response = await axios.get(url);
       const $ = cheerio.load(response.data);
 
-      // First pass: Remove all unwanted elements
-      $('script, style, link, meta, noscript, iframe, img, svg, head').remove();
-      $('.comments, .comment, .ad, .advertisement, .social-share, .navigation, .nav, .menu, .footer, .header').remove();
-      $('header, footer, nav, aside').remove();
-      $('code, pre').remove();
+      // Enhanced content extraction
+      $('script').remove();
+      $('style').remove();
+      $('nav').remove();
+      $('header').remove();
+      $('footer').remove();
+      $('iframe').remove();
+      $('.advertisement').remove();
+      $('.ads').remove();
 
-      // Clean text content
-      const cleanText = (text: string): string => {
-        return text
-          .replace(/[|=*_]{3,}/g, '. ') // Replace separators with periods
-          .replace(/\.{3,}/g, '...') // Normalize ellipsis
-          .replace(/[\t\r\f\v]/g, ' ') // Convert tabs and other whitespace to spaces
-          .replace(/\n{3,}/g, '\n\n') // Normalize line breaks
-          .replace(/\s{2,}/g, ' ') // Normalize spaces
-          .trim();
-      };
+      // Try to get the main content first
+      let content = this.extractMainContent($);
 
-      // Process content by type
-      const processElement = (el: Element): string => {
-        const $el = $(el);
-        const tag = el.tagName.toLowerCase();
-        const text = $el.text().trim();
-
-        if (!text) return '';
-
-        switch (tag) {
-          case 'h1':
-          case 'h2':
-          case 'h3':
-          case 'h4':
-          case 'h5':
-          case 'h6':
-            return `\n${cleanText(text)}.\n`;
-          
-          case 'li':
-            return `• ${cleanText(text)}.\n`;
-          
-          case 'p':
-            const cleaned = cleanText(text);
-            return cleaned.endsWith('.') ? `${cleaned}\n` : `${cleaned}.\n`;
-          
-          default:
-            return cleanText(text) + '\n';
-        }
-      };
-
-      // Find main content container
-      const mainSelectors = [
-        'article',
-        'main',
-        '[role="main"]',
-        '.content',
-        '.post-content',
-        '.article-content',
-        '.entry-content',
-        '#content'
-      ];
-
-      let $mainContent = $();
-      for (const selector of mainSelectors) {
-        $mainContent = $(selector);
-        if ($mainContent.length > 0) break;
+      // If no main content found, fall back to body text
+      if (!content.trim()) {
+        content = $('body').text();
       }
 
-      // Fallback to body if no main content found
-      if ($mainContent.length === 0) {
-        $mainContent = $('body');
-      }
-
-      // Process elements in order
-      const contentParts: string[] = [];
-      $mainContent.find('h1, h2, h3, h4, h5, h6, p, li').each((_, el) => {
-        const processedText = processElement(el);
-        if (processedText.trim()) {
-          contentParts.push(processedText);
-        }
-      });
-
-      const finalText = contentParts
-        .join('')
-        .replace(/\n{3,}/g, '\n\n')
-        .trim();
-
-      console.log('Processed web content length:', finalText.length);
-      return finalText;
-
+      // Clean up the text
+      return this.cleanupText(content);
     } catch (error) {
-      throw new Error(`Failed to read webpage: ${error instanceof Error ? error.message : String(error)}`);
+      console.error('Failed to read web page:', error);
+      throw new Error(`Failed to read web page: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 
-  private isValidUrl(url: string): boolean {
-    try {
-      new URL(url);
-      return true;
-    } catch {
-      return false;
+  private extractMainContent($: cheerio.CheerioAPI): string {
+    const possibleContentSelectors = [
+      'article',
+      '[role="main"]',
+      '.main-content',
+      '#main-content',
+      '.post-content',
+      '.article-content',
+      'main',
+      '.entry-content',
+      '#content'
+    ];
+
+    for (const selector of possibleContentSelectors) {
+      const element = $(selector);
+      if (element.length) {
+        return element.text();
+      }
     }
+
+    return '';
+  }
+
+  private cleanupText(text: string): string {
+    return text
+      .replace(/\s+/g, ' ')        // Replace multiple spaces with single space
+      .replace(/\n\s*\n/g, '\n\n') // Replace multiple newlines with double newline
+      .replace(/\t/g, ' ')         // Replace tabs with spaces
+      .trim();
+  }
+
+  // Google Docs specific methods
+  private async readGoogleDoc(url: string): Promise<string> {
+    try {
+      // Convert viewing URL to export URL
+      const docId = this.extractGoogleDocId(url);
+      if (!docId) {
+        throw new Error('Invalid Google Docs URL');
+      }
+
+      const exportUrl = `https://docs.google.com/document/d/${docId}/export?format=txt`;
+      console.log('Fetching Google Doc from:', exportUrl);
+
+      const response = await axios.get(exportUrl, {
+        responseType: 'text',
+        headers: {
+          'Accept': 'text/plain'
+        }
+      });
+
+      return response.data;
+    } catch (error) {
+      console.error('Failed to read Google Doc:', error);
+      throw new Error('Failed to read Google Doc. Make sure the document is publicly accessible.');
+    }
+  }
+
+  private extractGoogleDocId(url: string): string | null {
+    // Handle different Google Docs URL formats
+    const patterns = [
+      /\/document\/d\/([a-zA-Z0-9-_]+)/,
+      /\/document\/u\/\d+\/d\/([a-zA-Z0-9-_]+)/,
+      /id=([a-zA-Z0-9-_]+)/
+    ];
+
+    for (const pattern of patterns) {
+      const match = url.match(pattern);
+      if (match && match[1]) {
+        return match[1];
+      }
+    }
+
+    return null;
   }
 }

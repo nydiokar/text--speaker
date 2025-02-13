@@ -5,12 +5,14 @@ export interface TextSegment {
 }
 
 export class TextProcessor {
-  private static readonly DEFAULT_PAUSE = 300; // Reduced pause
-  private static readonly LIST_PAUSE = 500;
+  private static readonly SENTENCE_PAUSE = 500; // ms pause after sentences
+  private static readonly COMMA_PAUSE = 200;    // ms pause after commas
+  private static readonly LIST_PAUSE = 500;     // ms pause after list items
   private static readonly ENUMERATION_PAUSE = 400;
 
   public static processText(text: string): TextSegment[] {
     const segments: TextSegment[] = [];
+    
     // Split by paragraphs first
     const paragraphs = text.split(/\n\s*\n/);
     
@@ -37,16 +39,33 @@ export class TextProcessor {
         continue;
       }
 
-      // Handle longer sentences by splitting on major punctuation
+      // Split into sentences and add pauses
       const sentences = paragraph
-        .split(/(?<=[.!?])\s+(?=[A-Z])/)
-        .filter(s => s.trim().length > 0)
+        .split(/([.!?]+)(?=\s+|$)/)  // Split keeping the punctuation
+        .reduce((acc: string[], part) => {
+          if (part.match(/[.!?]+/)) {
+            // Combine punctuation with previous part
+            acc[acc.length - 1] += part;
+          } else if (part.trim()) {
+            // Split by commas and add pauses
+            const commaParts = part.split(/([,])(?=\s+|$)/);
+            commaParts.forEach(commaPart => {
+              if (commaPart === ',') {
+                acc[acc.length - 1] += commaPart;
+              } else if (commaPart.trim()) {
+                acc.push(commaPart.trim());
+              }
+            });
+          }
+          return acc;
+        }, [])
+        .filter(s => s.trim())
         .map(s => ({
           type: 'sentence' as const,
           content: s.trim(),
-          pauseAfter: this.DEFAULT_PAUSE
+          pauseAfter: s.match(/[.!?]+$/) ? this.SENTENCE_PAUSE : this.COMMA_PAUSE
         }));
-      
+
       segments.push(...sentences);
     }
 
