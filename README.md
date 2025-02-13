@@ -1,14 +1,20 @@
 # Speaker AI
 
-A simple command-line text-to-speech application that uses Windows' built-in speech synthesis capabilities to read text files or direct input aloud.
+A command-line text-to-speech application that uses Windows' built-in speech synthesis capabilities to read text files, web content, or direct input aloud.
 
 ## Features
 
 - Read text files (.txt, .md) aloud
 - Convert direct text input to speech
+- Read web content with smart content extraction
+- Read Google Docs (public documents)
+- Interactive progress bar with time estimation
 - Uses native Windows text-to-speech engine
+- Smart text processing with natural pauses
 - Simple command-line interface
-- Error handling for unsupported file types
+- Batch processing for efficient playback - currently set at 3 
+- Interactive playback controls
+- Error handling and recovery
 
 ## Prerequisites
 
@@ -53,9 +59,9 @@ This will start an interactive menu where you can:
 
 ### 2. Command Line Mode
 
-The application also supports direct command-line usage with the following commands:
+The application supports direct command-line usage with the following commands:
 
-### 1. Read a Text File
+#### Read a Text File
 
 ```bash
 npm run start speak <file-path>
@@ -66,11 +72,11 @@ Example:
 npm run start speak test.txt
 ```
 
-This command will read the contents of the specified text file aloud. Supported file formats are:
+Supported file formats:
 - .txt
 - .md
 
-### 2. Read Direct Text Input
+#### Read Direct Text Input
 
 ```bash
 npm run start say "<text>"
@@ -81,7 +87,36 @@ Example:
 npm run start say "Hello, this is a test message"
 ```
 
-### 3. List Available Voices
+#### Read Web Content
+
+To read content from a webpage:
+
+```bash
+npm run start read-web <url>
+```
+
+Example:
+```bash
+npm run start read-web "https://example.com/article"
+```
+
+The command will:
+- Fetch the webpage
+- Extract the main content (excluding navigation, headers, footers, etc.)
+- Clean up the content for better readability
+- Read it aloud with progress tracking
+
+#### Read Google Docs
+
+To read content from a Google Doc (must be publicly accessible):
+
+```bash
+npm run start read-web "https://docs.google.com/document/d/[document-id]"
+```
+
+The application automatically detects Google Doc URLs and uses the appropriate extraction method.
+
+#### List Available Voices
 
 To see all available text-to-speech voices on your system:
 
@@ -91,9 +126,21 @@ npm run start voices
 
 This will display a list of all installed voices with their names, cultures, and genders.
 
-### 4. Interactive Playback Controls
+#### Voice Selection
 
-When you start reading content (using `speak`, `say`, or `read-web`), the application enters interactive mode with the following keyboard controls:
+You can specify a different voice for any read command using the `-v` or `--voice` option:
+
+```bash
+# Use a specific voice for reading text
+npm run start say "Hello World" --voice "Microsoft David"
+
+# Use a specific voice for reading files
+npm run start speak test.txt --voice "Microsoft Zira"
+```
+
+### Interactive Playback Controls
+
+When you start reading content, the application enters interactive mode with the following keyboard controls:
 
 ```
 [space]    - Pause/Resume playback
@@ -104,169 +151,59 @@ When you start reading content (using `speak`, `say`, or `read-web`), the applic
 [Ctrl+C]   - Force quit
 ```
 
-The interactive mode provides immediate feedback and control over the reading process. You can:
-- Pause at any time with spacebar
-- Navigate back and forth through sentences
-- Replay sections you want to hear again
-- Quit cleanly with 'q' or force quit with Ctrl+C
+The interactive mode provides:
+- Real-time progress bar showing reading progress
+- Estimated time remaining
+- Segment count and percentage complete
+- Immediate feedback on navigation
+- Clean playback control
 
-### 5. Read Web Page Content
+### Progress Tracking
 
-To read content from a webpage:
+During playback, you'll see:
+- A visual progress bar
+- Current segment / total segments
+- Percentage complete
+- Estimated time remaining
+- Time elapsed
 
-```bash
-npm run start read-web <url>
-npm run start read-web <url>
-```
+The progress bar updates in real-time and accurately reflects:
+- Pauses and resumes
+- Forward/backward navigation
+- Current position in content
 
-Example:
-```bash
-npm run start read-web "https://example.com/article"
-```
-
-The command will fetch the webpage, extract the main content (excluding navigation, headers, footers, etc.), and read it aloud.
-
-### 6. Stop Speech Synthesis
-
-To stop the current speech synthesis at any time:
-
-```bash
-npm run start stop
-```
-
-This command will immediately stop any ongoing text-to-speech playback.
-
-## Voice Selection
-
-You can specify a different voice for any read command using the `-v` or `--voice` option:
-
-```bash
-# List available voices
-npm run start voices
-
-# Use a specific voice for reading text
-npm run start say "Hello World" --voice "Microsoft David"
-
-# Use a specific voice for reading files
-npm run start speak test.txt --voice "Microsoft Zira"
-
-# Use a specific voice for reading web pages
-npm run start read-web "https://example.com" --voice "Microsoft David"
-```
-
-The voice name should match exactly what is shown in the `voices` command output.
-
-## Example Usage
-
-Here's a typical workflow:
-
-1. Start reading a text file:
-```bash
-npm run start speak document.txt
-```
-
-2. Use keyboard controls while reading:
-   - Press `space` to pause/resume
-   - Use arrow keys or `b`/`f` to navigate
-   - Press `r` to replay current sentence
-   - Press `q` to quit cleanly
-
-3. If needed, specify a voice when starting:
-```bash
-npm run start speak document.txt --voice "Microsoft David"
-```
-
-The interactive controls work the same way for all reading commands:
-```bash
-npm run start say "Hello World"           # Direct text
-npm run start read-web "example.com"      # Web content
-```
-
-## How It Works
-
-The application is built with TypeScript and consists of four main components:
-
-1. **Speech Service** (`src/services/speechService.ts`)
-   - Uses Windows PowerShell's System.Speech.Synthesis
-   - Converts text to speech using native Windows text-to-speech engine
-   - Handles speech synthesis and error management
-
-2. **File Reader** (`src/services/fileReader.ts`)
-   - Handles reading text files
-   - Validates file extensions
-   - Provides error handling for file operations
-
-3. **Web Reader** (`src/services/webReader.ts`)
-   - Fetches web page content using axios
-   - Extracts readable content using cheerio
-   - Cleans up and formats text for reading
-
-4. **CLI Interface** (`src/index.ts`)
-   - Built using Commander.js
-   - Provides user-friendly command-line interface
-   - Handles command parsing and execution
-
-## Technical Details
-
-- Built with TypeScript for type safety and better development experience
-- Uses Commander.js for CLI argument parsing
-- Employs native Windows PowerShell commands for text-to-speech
-- Uses async/await for handling file operations and speech synthesis
-- Includes error handling and user feedback
-
-### Smart Pause Handling
+### Smart Text Processing
 
 The application includes intelligent pause timing for different types of content:
 
 - Standard sentences: 500ms pause after each sentence
-- List items (bullet points): 800ms pause after each item
-- Enumerated items (numbered/alphabetical): 600ms pause after each item
+- List items (bullet points): 500ms pause after each item
+- Enumerated items: 400ms pause after each item
+- Commas: 200ms pause
 
-This creates a more natural reading experience, especially for:
+This creates a more natural reading experience for:
 - Bullet-point lists (•, -, *)
 - Numbered lists (1., 2., etc.)
 - Alphabetical lists (a., b., etc.)
 - Regular sentences with proper pauses at punctuation marks
 
-For example, when reading:
-```
-1. First item
-2. Second item
-• Bullet point
-a. Sub-item A
-b. Sub-item B
-```
-The system automatically adjusts pauses between items for better comprehension.
+## Technical Details
+
+The application is built with:
+- TypeScript for type safety
+- Commander.js for CLI interface
+- Windows PowerShell for text-to-speech
+- Axios for web content fetching
+- Cheerio for content extraction
+- Batch processing for efficient playback
 
 ## Development
 
-For development, you can use the following npm scripts:
-
+Available npm scripts:
 - `npm run build` - Compiles TypeScript to JavaScript
 - `npm run start` - Runs the compiled application
-- `npm run dev` - Runs the application directly with ts-node
-- `npm test` - Runs the test suite
-
-## Error Handling
-
-The application includes error handling for common scenarios:
-
-- Unsupported file types
-- File reading errors
-- Speech synthesis errors
-- Invalid command usage
-
-Error messages are displayed in the console with relevant details for troubleshooting.
-
-## Future Improvements
-
-Potential enhancements could include:
-
-- Support for additional file formats
-- Voice selection options
-- Speech rate and pitch control
-- Cross-platform support
-- Integration with cloud-based text-to-speech services
+- `npm run dev` - Runs the application with ts-node
+- `npm test` - Runs the Mocha test suite
 
 ## Troubleshooting
 
@@ -276,6 +213,19 @@ If you encounter issues:
 2. Check if Windows Text-to-Speech is enabled
 3. Verify file permissions for text files
 4. Ensure PowerShell execution is allowed
+5. Check internet connectivity for web content
+6. Verify Google Doc sharing settings if applicable
+
+## Future Improvements
+
+Planned enhancements:
+- Cross-platform support
+- Additional file format support
+- Speech rate and pitch controls
+- Custom voice profiles
+- Reading list management
+- Advanced text preprocessing
+- Cloud-based TTS integration
 
 ## License
 

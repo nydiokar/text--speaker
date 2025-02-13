@@ -1,7 +1,7 @@
 {
   "name": "speaker-ai",
-  "version": "0.1.1",
-  "description": "A CLI tool to read text files aloud",
+  "version": "0.1.3",
+  "description": "A CLI tool to read text files and websites (+ google docs) aloud",
   "main": "dist/index.js",
   "bin": {
     "speaker-ai": "./dist/index.js"

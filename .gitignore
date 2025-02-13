@@ -4,3 +4,4 @@ dist/
 .DS_Store
 temp_speech.txt
 cline_docs/
+temp_speech/

@@ -1,7 +1,6 @@
 import { spawn } from 'child_process';
-import * as path from 'path';
-import * as fs from 'fs/promises';
 import { TextProcessor, TextSegment } from './textProcessor';
+import { ProgressTracker } from './progressTracker';
 
 export interface Voice {
   name: string;
@@ -15,29 +14,50 @@ export class SpeechService {
   private _isPaused: boolean = false;
   private isSpeaking: boolean = false;
   private powershellProcess: any = null;
-  private tempDir: string;
   private defaultVoice: string | null = null;
-  private rate: number = 1;
-  private volume: number = 100;
   private selectedVoice: string | undefined;
-  private batchSize = 3; // Number of segments to process at once
+  private batchSize = 3;
   private currentBatchPromise: Promise<void> | null = null;
   private isProcessing: boolean = false;
   private forwardRequested: boolean = false;
+  private progressTracker: ProgressTracker | null = null;
+  private progressInterval: NodeJS.Timeout | null = null;
+  private activeProcesses: Set<number> = new Set();
 
   constructor() {
-    this.tempDir = path.join(process.cwd(), 'temp_speech');
-    // Create temp directory on startup
-    this.initTempDir().catch(() => {});
-    // Try to initialize default voice
+    this.setupCleanupHandlers();
     this.initializeDefaultVoice().catch(() => {});
   }
 
-  private async initTempDir(): Promise<void> {
-    try {
-      await fs.mkdir(this.tempDir, { recursive: true });
-    } catch (error) {
-      console.error('Failed to create temp directory:', error);
+  private setupCleanupHandlers() {
+    process.on('exit', () => this.emergencyCleanup());
+    process.on('SIGINT', () => {
+      this.emergencyCleanup();
+      process.exit();
+    });
+    process.on('SIGTERM', () => {
+      this.emergencyCleanup();
+      process.exit();
+    });
+  }
+
+  private emergencyCleanup() {
+    if (this.progressInterval) {
+      clearInterval(this.progressInterval);
+    }
+    for (const pid of this.activeProcesses) {
+      try {
+        process.kill(pid, 'SIGKILL');
+      } catch (e) {}
+    }
+  }
+
+  private registerProcess(proc: any) {
+    if (proc && proc.pid) {
+      this.activeProcesses.add(proc.pid);
+      proc.on('close', () => {
+        this.activeProcesses.delete(proc.pid);
+      });
     }
   }
 
@@ -47,36 +67,23 @@ export class SpeechService {
       if (voices.length > 0) {
         this.defaultVoice = voices[0].name;
       }
-    } catch (error) {
-      console.error('Failed to initialize default voice:', error);
-    }
+    } catch (error) {}
   }
 
   public isPaused(): boolean {
     return this._isPaused;
   }
 
-  private async cleanup(): Promise<void> {
-    try {
-      const files = await fs.readdir(this.tempDir);
-      await Promise.all(
-        files.map(file => 
-          fs.unlink(path.join(this.tempDir, file)).catch(() => {})
-        )
-      );
-    } catch (error) {
-      console.error('Cleanup error:', error);
-    }
-  }
-
   public async getVoices(): Promise<Voice[]> {
-    try {
-      const process = spawn('powershell', [
+    return new Promise((resolve, reject) => {
+      const process = spawn('powershell.exe', [
         '-NoProfile',
+        '-NoLogo',
+        '-ExecutionPolicy', 'Bypass',
         '-Command',
-        `[void][System.Reflection.Assembly]::LoadWithPartialName('System.Speech');
-         $synthesizer = New-Object System.Speech.Synthesis.SpeechSynthesizer;
-         $voices = $synthesizer.GetInstalledVoices() | 
+        `Add-Type -AssemblyName System.Speech;
+         $s = New-Object System.Speech.Synthesis.SpeechSynthesizer;
+         $voices = $s.GetInstalledVoices() | 
            Where-Object { $_.Enabled } | 
            ForEach-Object {
              $info = $_.VoiceInfo;
@@ -86,64 +93,32 @@ export class SpeechService {
                gender = $info.Gender.ToString();
              }
            };
-         $synthesizer.Dispose();
-         $voices | ConvertTo-Json -Compress`
+         $s.Dispose();
+         $voices | ConvertTo-Json`
       ]);
 
+      this.registerProcess(process);
       let stdout = '';
       
-      process.stdout.on('data', (data) => {
-        stdout += data.toString();
-      });
-
-      return new Promise((resolve, reject) => {
-        process.on('close', (code) => {
-          if (code === 0) {
-            try {
-              const voices = JSON.parse(stdout.trim() || '[]');
-              if (voices.length === 0) {
-                console.warn('No voices found');
-              }
-              resolve(voices);
-            } catch (error) {
-              console.error('Failed to parse voices:', stdout);
-              reject(new Error('Failed to parse voices data'));
-            }
-          } else {
-            reject(new Error('Failed to get voices'));
+      process.stdout.on('data', (data) => stdout += data.toString());
+      process.on('close', (code) => {
+        if (code === 0) {
+          try {
+            resolve(JSON.parse(stdout.trim() || '[]'));
+          } catch (error) {
+            reject(new Error('Failed to parse voices data'));
           }
-        });
+        } else {
+          reject(new Error('Failed to get voices'));
+        }
       });
-    } catch (error) {
-      console.error('Failed to get voices:', error);
-      throw error;
-    }
+    });
   }
 
-  private async validateVoice(voiceName?: string): Promise<string> {
-    if (!voiceName && !this.defaultVoice) {
-      const voices = await this.getVoices();
-      if (voices.length === 0) {
-        throw new Error('No voices available for speech synthesis');
-      }
-      this.defaultVoice = voices[0].name;
-      return this.defaultVoice;
+  private updateProgress() {
+    if (this.progressTracker && this.isSpeaking) {
+      process.stdout.write(this.progressTracker.renderProgressBar(this.currentSegmentIndex));
     }
-
-    if (voiceName) {
-      const voices = await this.getVoices();
-      const voice = voices.find(v => v.name === voiceName);
-      if (!voice) {
-        throw new Error(
-          `Voice "${voiceName}" not found. Available voices:\n${
-            voices.map(v => `- ${v.name} (${v.culture})`).join('\n')
-          }`
-        );
-      }
-      return voiceName;
-    }
-
-    return this.defaultVoice!;
   }
 
   private async speakBatch(): Promise<void> {
@@ -153,9 +128,7 @@ export class SpeechService {
 
     if (!this.isSpeaking || this._isPaused) return;
 
-    const remainingSegments = this.segments.length - this.currentSegmentIndex;
-    if (remainingSegments <= 0) {
-      console.log('Reached end of content');
+    if (this.currentSegmentIndex >= this.segments.length) {
       this.isSpeaking = false;
       return;
     }
@@ -176,106 +149,92 @@ export class SpeechService {
 
     if (batchSegments.length === 0) return;
 
-    const tempFile = path.join(this.tempDir, 'current_batch.txt');
     const batchContent = batchSegments.map(s => s.content).join('\n');
-    
-    try {
-      await fs.writeFile(tempFile, batchContent, 'utf8');
 
-      return new Promise((resolve, reject) => {
-        const process = spawn('powershell', [
-          '-NoProfile',
-          '-NoLogo',
-          '-NonInteractive',
-          '-Command',
-          `[void][System.Reflection.Assembly]::LoadWithPartialName('System.Speech'); 
-           $s = New-Object System.Speech.Synthesis.SpeechSynthesizer; 
-           ${this.selectedVoice ? `$s.SelectVoice('${this.selectedVoice}');` : ''} 
-           $s.Rate = [Math]::Max(-10, [Math]::Min(10, [int]((${ this.rate } - 1) * 10)));
-           $s.Volume = ${ this.volume };
-           $s.Speak([IO.File]::ReadAllText('${tempFile}')); 
-           $s.Dispose(); 
-           Write-Output 'BATCH_COMPLETE'`
-        ]);
+    return new Promise((resolve) => {
+      const process = spawn('powershell.exe', [
+        '-NoProfile',
+        '-NoLogo',
+        '-ExecutionPolicy', 'Bypass',
+        '-Command',
+        `Add-Type -AssemblyName System.Speech | Out-Null;
+        $s = New-Object System.Speech.Synthesis.SpeechSynthesizer;
+        try {
+            ${this.selectedVoice ? `$s.SelectVoice('${this.selectedVoice}');` : ''}
+            $text = @'
+${batchContent}
+'@
+            $s.Speak($text);
+            Write-Output "COMPLETE"
+        }
+        finally {
+            $s.Dispose();
+        }`
+      ]);
 
-        this.powershellProcess = process;
+      this.registerProcess(process);
+      this.powershellProcess = process;
 
-        process.stdout.on('data', async (data) => {
-          const output = data.toString().trim();
-          if (output === 'BATCH_COMPLETE' && this.isSpeaking) {
-            this.currentSegmentIndex += batchSegments.length;
-            resolve();
-            
-            if (this.currentSegmentIndex < this.segments.length && this.isSpeaking && !this._isPaused) {
-              await this.speakBatch();
-            }
+      process.stdout.on('data', async (data) => {
+        if (data.toString().includes('COMPLETE') && this.isSpeaking) {
+          this.currentSegmentIndex += batchSegments.length;
+          this.updateProgress();
+          resolve();
+          
+          if (this.currentSegmentIndex < this.segments.length && this.isSpeaking && !this._isPaused) {
+            await this.speakBatch();
           }
-        });
-
-        process.stderr.on('data', (data) => {
-          console.error('Speech error:', data.toString());
-        });
-
-        process.on('error', (error) => {
-          console.error('Process error:', error);
-          resolve();
-        });
-
-        process.on('close', (code) => {
-          this.powershellProcess = null;
-          resolve();
-        });
+        }
       });
-    } catch (error) {
-      console.error('Batch processing error:', error);
-      throw error;
-    }
+
+      process.on('error', () => resolve());
+      process.on('close', () => {
+        this.powershellProcess = null;
+        resolve();
+      });
+    });
   }
 
   public async speak(text: string, voiceName?: string, startFromSegment: number = 0): Promise<void> {
-    console.log('Starting speech synthesis...');
-    if (this.isSpeaking) {
-      console.log('Stopping previous speech...');
-      await this.stop();
-    }
+    if (this.isSpeaking) await this.stop();
 
     this.selectedVoice = voiceName;
     this.segments = TextProcessor.processText(text);
-    console.log(`Processed text into ${this.segments.length} segments`);
     this.currentSegmentIndex = startFromSegment;
     this._isPaused = false;
     this.isSpeaking = true;
+    this.progressTracker = new ProgressTracker(this.segments);
+    
+    if (this.progressInterval) clearInterval(this.progressInterval);
+    this.progressInterval = setInterval(() => {
+      if (this.isSpeaking && !this._isPaused) this.updateProgress();
+    }, 1000);
 
     try {
-      await this.speakBatch(); // Use batch processing instead of single segments
+      await this.speakBatch();
     } finally {
       this.isSpeaking = false;
-      console.log('Speech synthesis completed');
+      if (this.progressInterval) {
+        clearInterval(this.progressInterval);
+        this.progressInterval = null;
+      }
+      process.stdout.write('\n');
     }
   }
 
   public async pause(): Promise<void> {
     this._isPaused = true;
+    if (this.progressTracker) this.progressTracker.pause();
     await this.stopCurrentProcess();
   }
 
   public async resume(): Promise<void> {
     if (!this._isPaused) return;
     
-    console.log('Resuming speech...');
     this._isPaused = false;
     this.isSpeaking = true;
+    if (this.progressTracker) this.progressTracker.resume();
     await this.speakBatch();
-  }
-
-  public async rewind(segments: number = 1): Promise<void> {
-    console.log(`Rewinding ${segments} segments...`);
-    await this.stopCurrentProcess();
-    this.currentSegmentIndex = Math.max(0, this.currentSegmentIndex - segments);
-    if (!this._isPaused && this.isSpeaking) {
-      await new Promise(resolve => setTimeout(resolve, 100)); // Small delay for cleanup
-      await this.speakBatch();
-    }
   }
 
   public async forward(segments: number = 1): Promise<void> {
@@ -285,6 +244,7 @@ export class SpeechService {
         this.segments.length - 1, 
         this.currentSegmentIndex + segments
       );
+      this.updateProgress();
       await this.stopCurrentProcess();
       return;
     }
@@ -292,84 +252,84 @@ export class SpeechService {
     try {
       this.isProcessing = true;
       this.forwardRequested = false;
-      console.log(`Forwarding ${segments} segments...`);
       
       await this.stopCurrentProcess();
-      if (this.currentBatchPromise) {
-        await this.currentBatchPromise;
-      }
+      if (this.currentBatchPromise) await this.currentBatchPromise;
       
-      const newIndex = Math.min(
+      this.currentSegmentIndex = Math.min(
         this.segments.length - 1, 
         this.currentSegmentIndex + segments
       );
       
-      console.log(`Moving from segment ${this.currentSegmentIndex} to ${newIndex}`);
-      this.currentSegmentIndex = newIndex;
-
+      this.updateProgress();
       if (!this._isPaused) {
         this.isSpeaking = true;
-        const currentContent = this.segments[this.currentSegmentIndex].content;
-        console.log(`Continuing with: "${currentContent.substring(0, 50)}..."`);
         await this.speakBatch();
       }
-    } catch (error) {
-      console.error('Forward operation failed:', error);
-      this.isSpeaking = false;
     } finally {
       this.isProcessing = false;
-      if (this.forwardRequested) {
-        this.forward(1).catch(console.error);
-      }
+      if (this.forwardRequested) await this.forward(1);
+    }
+  }
+
+  public async rewind(segments: number = 1): Promise<void> {
+    await this.stopCurrentProcess();
+    this.currentSegmentIndex = Math.max(0, this.currentSegmentIndex - segments);
+    this.updateProgress();
+    if (!this._isPaused && this.isSpeaking) {
+      await new Promise(resolve => setTimeout(resolve, 100));
+      await this.speakBatch();
     }
   }
 
   public async stop(): Promise<void> {
     this.isSpeaking = false;
     this._isPaused = false;
+    if (this.progressInterval) {
+      clearInterval(this.progressInterval);
+      this.progressInterval = null;
+    }
     await this.stopCurrentProcess();
-    await this.cleanup();
+    process.stdout.write('\n');
   }
 
   private async stopCurrentProcess(): Promise<void> {
     if (this.powershellProcess) {
       return new Promise<void>((resolve) => {
-        const timeout = setTimeout(() => {
+        const cleanup = () => {
           if (this.powershellProcess) {
-            this.powershellProcess.kill('SIGKILL');
+            try {
+              this.powershellProcess.kill('SIGTERM');
+            } catch (e) {}
             this.powershellProcess = null;
           }
           resolve();
-        }, 200);
+        };
 
+        const timeout = setTimeout(cleanup, 200);
         this.powershellProcess.on('close', () => {
           clearTimeout(timeout);
           this.powershellProcess = null;
           resolve();
         });
         
-        this.powershellProcess.kill();
+        try {
+          this.powershellProcess.kill();
+        } catch (e) {
+          cleanup();
+        }
       });
     }
   }
 
   public async replay(): Promise<void> {
     try {
-      // If currently playing, stop first
       await this.stopCurrentProcess();
-      
-      // Verify we have valid segments and index
-      if (!this.segments || !this.segments[this.currentSegmentIndex]) {
-        console.error('No valid segment to replay');
-        return;
-      }
-
-      console.log(`Replaying segment ${this.currentSegmentIndex}`);
+      if (!this.segments || !this.segments[this.currentSegmentIndex]) return;
       this.isSpeaking = true;
       this._isPaused = false;
       await this.speakBatch();
     } catch (error) {
-      console.error('Replay failed:', error);
       this.isSpeaking = false;
     }
   }
