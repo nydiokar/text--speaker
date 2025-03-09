@@ -1,336 +1,242 @@
-import { spawn } from 'child_process';
-import { TextProcessor, TextSegment } from './textProcessor';
-import { ProgressTracker } from './progressTracker';
+import * as fs from 'fs';
+import * as path from 'path';
+import { exec, execSync, ChildProcess } from 'child_process';
+import { promisify } from 'util';
 
-export interface Voice {
+const execAsync = promisify(exec);
+
+interface Voice {
   name: string;
   culture: string;
-  gender: string;
 }
 
 export class SpeechService {
-  private segments: TextSegment[] = [];
-  private currentSegmentIndex: number = 0;
+  private powershellPath: string;
+  private currentProcess: ChildProcess | null = null;
   private _isPaused: boolean = false;
-  private isSpeaking: boolean = false;
-  private powershellProcess: any = null;
-  private defaultVoice: string | null = null;
-  private selectedVoice: string | undefined;
-  private batchSize = 3;
-  private currentBatchPromise: Promise<void> | null = null;
-  private isProcessing: boolean = false;
-  private forwardRequested: boolean = false;
-  private progressTracker: ProgressTracker | null = null;
-  private progressInterval: NodeJS.Timeout | null = null;
-  private activeProcesses: Set<number> = new Set();
+  private readonly SCRIPT_FILE = 'temp_speech/speech-script.ps1';
+  private readonly PID_FILE = 'temp_speech/speech.pid';
 
   constructor() {
-    this.setupCleanupHandlers();
-    this.initializeDefaultVoice().catch(() => {});
-  }
-
-  private setupCleanupHandlers() {
-    process.on('exit', () => this.emergencyCleanup());
-    process.on('SIGINT', () => {
-      this.emergencyCleanup();
-      process.exit();
-    });
-    process.on('SIGTERM', () => {
-      this.emergencyCleanup();
-      process.exit();
-    });
-  }
-
-  private emergencyCleanup() {
-    if (this.progressInterval) {
-      clearInterval(this.progressInterval);
-    }
-    for (const pid of this.activeProcesses) {
-      try {
-        process.kill(pid, 'SIGKILL');
-      } catch (e) {}
-    }
-  }
-
-  private registerProcess(proc: any) {
-    if (proc && proc.pid) {
-      this.activeProcesses.add(proc.pid);
-      proc.on('close', () => {
-        this.activeProcesses.delete(proc.pid);
-      });
-    }
-  }
-
-  private async initializeDefaultVoice(): Promise<void> {
     try {
-      const voices = await this.getVoices();
-      if (voices.length > 0) {
-        this.defaultVoice = voices[0].name;
+      this.powershellPath = execSync('where powershell.exe').toString().trim();
+      console.log('PowerShell path:', this.powershellPath);
+      
+      const scriptDir = path.dirname(this.SCRIPT_FILE);
+      if (!fs.existsSync(scriptDir)) {
+        fs.mkdirSync(scriptDir, { recursive: true });
       }
-    } catch (error) {}
+
+      // Clean up any existing processes
+      this.cleanup();
+    } catch (error) {
+      console.error('SpeechService initialization error:', error);
+      throw error;
+    }
   }
 
-  public isPaused(): boolean {
+  private async killAllSpeechProcesses() {
+    try {
+      const script = `
+        Get-WmiObject Win32_Process | Where-Object { 
+          $_.Name -eq 'powershell.exe' -and 
+          ($_.CommandLine -match 'speech-script' -or 
+           $_.CommandLine -match 'temp_speech')
+        } | ForEach-Object { 
+          $_.Terminate() 
+        }
+      `;
+      await execAsync(`${this.powershellPath} -NoProfile -NonInteractive -Command "${script}"`);
+    } catch (error) {
+      console.error('Failed to kill processes:', error);
+    }
+  }
+
+  private cleanup() {
+    this.killAllSpeechProcesses().then(() => {
+      try {
+        if (fs.existsSync(this.SCRIPT_FILE)) {
+          fs.unlinkSync(this.SCRIPT_FILE);
+        }
+        if (fs.existsSync(this.PID_FILE)) {
+          fs.unlinkSync(this.PID_FILE);
+        }
+      } catch (error) {
+        console.error('Cleanup error:', error);
+      }
+    });
+  }
+
+  public getCurrentProcess(): ChildProcess | null {
+    return this.currentProcess;
+  }
+
+  public get isPaused(): boolean {
     return this._isPaused;
   }
 
-  public async getVoices(): Promise<Voice[]> {
-    return new Promise((resolve, reject) => {
-      const process = spawn('powershell.exe', [
-        '-NoProfile',
-        '-NoLogo',
-        '-ExecutionPolicy', 'Bypass',
-        '-Command',
-        `Add-Type -AssemblyName System.Speech;
-         $s = New-Object System.Speech.Synthesis.SpeechSynthesizer;
-         $voices = $s.GetInstalledVoices() | 
-           Where-Object { $_.Enabled } | 
-           ForEach-Object {
-             $info = $_.VoiceInfo;
-             @{
-               name = $info.Name;
-               culture = $info.Culture.Name;
-               gender = $info.Gender.ToString();
-             }
-           };
-         $s.Dispose();
-         $voices | ConvertTo-Json`
-      ]);
-
-      this.registerProcess(process);
-      let stdout = '';
-      
-      process.stdout.on('data', (data) => stdout += data.toString());
-      process.on('close', (code) => {
-        if (code === 0) {
-          try {
-            resolve(JSON.parse(stdout.trim() || '[]'));
-          } catch (error) {
-            reject(new Error('Failed to parse voices data'));
-          }
-        } else {
-          reject(new Error('Failed to get voices'));
-        }
-      });
-    });
-  }
-
-  private updateProgress() {
-    if (this.progressTracker && this.isSpeaking) {
-      process.stdout.write(this.progressTracker.renderProgressBar(this.currentSegmentIndex));
-    }
-  }
-
-  private async speakBatch(): Promise<void> {
-    if (this.currentBatchPromise) {
-      await this.currentBatchPromise;
-    }
-
-    if (!this.isSpeaking || this._isPaused) return;
-
-    if (this.currentSegmentIndex >= this.segments.length) {
-      this.isSpeaking = false;
-      return;
-    }
-
+  async getVoices(): Promise<Voice[]> {
     try {
-      this.currentBatchPromise = this.processBatch();
-      await this.currentBatchPromise;
-    } finally {
-      this.currentBatchPromise = null;
+      const script = `
+        Add-Type -AssemblyName System.Speech;
+        $synthesizer = New-Object System.Speech.Synthesis.SpeechSynthesizer;
+        $voices = @($synthesizer.GetInstalledVoices() | 
+          Select-Object -ExpandProperty VoiceInfo | 
+          ForEach-Object {
+            @{
+              name = $_.Name;
+              culture = $_.Culture.Name
+            }
+          });
+        $synthesizer.Dispose();
+        $jsonVoices = ConvertTo-Json -InputObject $voices -Compress;
+        Write-Output $jsonVoices;
+      `;
+
+      const { stdout } = await execAsync(`${this.powershellPath} -NoProfile -NonInteractive -Command "${script}"`);
+      const cleanOutput = stdout.trim().replace(/[\ufeff\r\n]/g, '');
+      
+      try {
+        if (!cleanOutput) {
+          console.warn('No voice data received');
+          return [];
+        }
+        const parsed = JSON.parse(cleanOutput);
+        return Array.isArray(parsed) ? parsed : [parsed];
+      } catch (error) {
+        console.error('JSON parse error. Raw output:', cleanOutput);
+        return [];
+      }
+    } catch (error) {
+      console.error('Get voices error:', error);
+      return [];
     }
   }
 
-  private async processBatch(): Promise<void> {
-    const batchSegments = this.segments.slice(
-      this.currentSegmentIndex,
-      this.currentSegmentIndex + Math.min(this.batchSize, this.segments.length - this.currentSegmentIndex)
-    );
+  async speak(text: string, voice?: string): Promise<ChildProcess> {
+    try {
+      // Stop any existing speech
+      await this.stop();
 
-    if (batchSegments.length === 0) return;
+      const script = `
+        $ErrorActionPreference = 'Stop'
+        Add-Type -AssemblyName System.Speech
 
-    const batchContent = batchSegments.map(s => s.content).join('\n');
+        function Initialize-Speech {
+          $synthesizer = New-Object System.Speech.Synthesis.SpeechSynthesizer
+          ${voice ? `$synthesizer.SelectVoice('${voice}')` : ''}
+          return $synthesizer
+        }
 
-    return new Promise((resolve) => {
-      const process = spawn('powershell.exe', [
-        '-NoProfile',
-        '-NoLogo',
-        '-ExecutionPolicy', 'Bypass',
-        '-Command',
-        `Add-Type -AssemblyName System.Speech | Out-Null;
-        $s = New-Object System.Speech.Synthesis.SpeechSynthesizer;
         try {
-            ${this.selectedVoice ? `$s.SelectVoice('${this.selectedVoice}');` : ''}
-            $text = @'
-${batchContent}
-'@
-            $s.Speak($text);
-            Write-Output "COMPLETE"
+          $synthesizer = Initialize-Speech
+          $synthesizer.Speak([string]@'
+${text}
+'@)
+        }
+        catch {
+          Write-Error $_.Exception.Message
+          exit 1
         }
         finally {
-            $s.Dispose();
-        }`
-      ]);
-
-      this.registerProcess(process);
-      this.powershellProcess = process;
-
-      process.stdout.on('data', async (data) => {
-        if (data.toString().includes('COMPLETE') && this.isSpeaking) {
-          this.currentSegmentIndex += batchSegments.length;
-          this.updateProgress();
-          resolve();
-          
-          if (this.currentSegmentIndex < this.segments.length && this.isSpeaking && !this._isPaused) {
-            await this.speakBatch();
+          if ($synthesizer) {
+            $synthesizer.Dispose()
           }
         }
-      });
+      `;
 
-      process.on('error', () => resolve());
-      process.on('close', () => {
-        this.powershellProcess = null;
-        resolve();
-      });
-    });
-  }
-
-  public async speak(text: string, voiceName?: string, startFromSegment: number = 0): Promise<void> {
-    if (this.isSpeaking) await this.stop();
-
-    this.selectedVoice = voiceName;
-    this.segments = TextProcessor.processText(text);
-    this.currentSegmentIndex = startFromSegment;
-    this._isPaused = false;
-    this.isSpeaking = true;
-    this.progressTracker = new ProgressTracker(this.segments);
-    
-    if (this.progressInterval) clearInterval(this.progressInterval);
-    this.progressInterval = setInterval(() => {
-      if (this.isSpeaking && !this._isPaused) this.updateProgress();
-    }, 1000);
-
-    try {
-      await this.speakBatch();
-    } finally {
-      this.isSpeaking = false;
-      if (this.progressInterval) {
-        clearInterval(this.progressInterval);
-        this.progressInterval = null;
-      }
-      process.stdout.write('\n');
-    }
-  }
-
-  public async pause(): Promise<void> {
-    this._isPaused = true;
-    if (this.progressTracker) this.progressTracker.pause();
-    await this.stopCurrentProcess();
-  }
-
-  public async resume(): Promise<void> {
-    if (!this._isPaused) return;
-    
-    this._isPaused = false;
-    this.isSpeaking = true;
-    if (this.progressTracker) this.progressTracker.resume();
-    await this.speakBatch();
-  }
-
-  public async forward(segments: number = 1): Promise<void> {
-    if (this.isProcessing) {
-      this.forwardRequested = true;
-      this.currentSegmentIndex = Math.min(
-        this.segments.length - 1, 
-        this.currentSegmentIndex + segments
-      );
-      this.updateProgress();
-      await this.stopCurrentProcess();
-      return;
-    }
-
-    try {
-      this.isProcessing = true;
-      this.forwardRequested = false;
+      fs.writeFileSync(this.SCRIPT_FILE, script);
       
-      await this.stopCurrentProcess();
-      if (this.currentBatchPromise) await this.currentBatchPromise;
-      
-      this.currentSegmentIndex = Math.min(
-        this.segments.length - 1, 
-        this.currentSegmentIndex + segments
-      );
-      
-      this.updateProgress();
-      if (!this._isPaused) {
-        this.isSpeaking = true;
-        await this.speakBatch();
-      }
-    } finally {
-      this.isProcessing = false;
-      if (this.forwardRequested) await this.forward(1);
-    }
-  }
-
-  public async rewind(segments: number = 1): Promise<void> {
-    await this.stopCurrentProcess();
-    this.currentSegmentIndex = Math.max(0, this.currentSegmentIndex - segments);
-    this.updateProgress();
-    if (!this._isPaused && this.isSpeaking) {
-      await new Promise(resolve => setTimeout(resolve, 100));
-      await this.speakBatch();
-    }
-  }
-
-  public async stop(): Promise<void> {
-    this.isSpeaking = false;
-    this._isPaused = false;
-    if (this.progressInterval) {
-      clearInterval(this.progressInterval);
-      this.progressInterval = null;
-    }
-    await this.stopCurrentProcess();
-    process.stdout.write('\n');
-  }
-
-  private async stopCurrentProcess(): Promise<void> {
-    if (this.powershellProcess) {
-      return new Promise<void>((resolve) => {
-        const cleanup = () => {
-          if (this.powershellProcess) {
-            try {
-              this.powershellProcess.kill('SIGTERM');
-            } catch (e) {}
-            this.powershellProcess = null;
+      const childProcess = exec(
+        `${this.powershellPath} -NoProfile -ExecutionPolicy Bypass -File "${this.SCRIPT_FILE}"`,
+        (error, stdout, stderr) => {
+          if (error && !this._isPaused) {
+            console.error('Speech error:', error);
           }
-          resolve();
-        };
-
-        const timeout = setTimeout(cleanup, 200);
-        this.powershellProcess.on('close', () => {
-          clearTimeout(timeout);
-          this.powershellProcess = null;
-          resolve();
-        });
-        
-        try {
-          this.powershellProcess.kill();
-        } catch (e) {
-          cleanup();
+          if (stderr) {
+            console.error('Speech stderr:', stderr);
+          }
+          this.cleanup();
         }
-      });
-    }
-  }
+      );
 
-  public async replay(): Promise<void> {
-    try {
-      await this.stopCurrentProcess();
-      if (!this.segments || !this.segments[this.currentSegmentIndex]) return;
-      this.isSpeaking = true;
+      this.currentProcess = childProcess;
       this._isPaused = false;
-      await this.speakBatch();
+
+      // Save process ID
+      fs.writeFileSync(this.PID_FILE, childProcess.pid!.toString());
+
+      return childProcess;
     } catch (error) {
-      this.isSpeaking = false;
+      console.error('Speak error:', error);
+      this.cleanup();
+      throw error;
+    }
+  }
+
+  async pause(): Promise<boolean> {
+    if (!this.currentProcess || this._isPaused) {
+      return false;
+    }
+
+    try {
+      const script = `
+        Add-Type -AssemblyName System.Speech
+        $processId = Get-Content '${this.PID_FILE}'
+        $process = Get-Process -Id $processId -ErrorAction SilentlyContinue
+        if ($process) {
+          $process.Suspend()
+          Write-Output "true"
+        }
+      `;
+
+      await execAsync(`${this.powershellPath} -NoProfile -NonInteractive -Command "${script}"`);
+      this._isPaused = true;
+      return true;
+    } catch (error) {
+      console.error('Pause error:', error);
+      return false;
+    }
+  }
+
+  async resume(): Promise<boolean> {
+    if (!this.currentProcess || !this._isPaused) {
+      return false;
+    }
+
+    try {
+      const script = `
+        Add-Type -AssemblyName System.Speech
+        $processId = Get-Content '${this.PID_FILE}'
+        $process = Get-Process -Id $processId -ErrorAction SilentlyContinue
+        if ($process) {
+          $process.Resume()
+          Write-Output "true"
+        }
+      `;
+
+      await execAsync(`${this.powershellPath} -NoProfile -NonInteractive -Command "${script}"`);
+      this._isPaused = false;
+      return true;
+    } catch (error) {
+      console.error('Resume error:', error);
+      return false;
+    }
+  }
+
+  async stop(): Promise<boolean> {
+    try {
+      if (this.currentProcess) {
+        this.currentProcess.kill();
+      }
+      await this.killAllSpeechProcesses();
+      this.cleanup();
+      this.currentProcess = null;
+      this._isPaused = false;
+      return true;
+    } catch (error) {
+      console.error('Stop error:', error);
+      return false;
     }
   }
 }

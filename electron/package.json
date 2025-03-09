@@ -1,0 +1,48 @@
+{
+  "name": "speaker-ai-gui",
+  "version": "1.0.0",
+  "description": "GUI for Speaker AI - Text to Speech Application",
+  "main": "dist/main/main.js",
+  "scripts": {
+    "clean": "rimraf dist",
+    "build": "node build.js",
+    "build:prod": "cross-env NODE_ENV=production node build.js",
+    "start": "npm run clean && npm run build && electron .",
+    "start:prod": "npm run clean && npm run build:prod && electron .",
+    "dev": "npm run start",
+    "package": "npm run build:prod && electron-builder"
+  },
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/electron": "^1.6.10",
+    "@types/node": "^20.11.5",
+    "@types/react": "^18.2.48",
+    "@types/react-dom": "^18.2.18",
+    "cross-env": "^7.0.3",
+    "electron": "^28.1.4",
+    "electron-builder": "^24.9.1",
+    "esbuild": "^0.20.1",
+    "rimraf": "^5.0.10",
+    "typescript": "^5.3.3"
+  },
+  "dependencies": {
+    "@emotion/babel-plugin": "^11.11.0",
+    "@emotion/cache": "^11.11.0",
+    "@emotion/css": "^11.11.2",
+    "@emotion/react": "^11.11.3",
+    "@emotion/styled": "^11.11.0",
+    "electron-store": "^8.1.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0"
+  },
+  "build": {
+    "appId": "com.speaker-ai.app",
+    "directories": {
+      "output": "dist_electron"
+    },
+    "win": {
+      "target": "nsis"
+    }
+  }
+}
