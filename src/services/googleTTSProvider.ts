@@ -82,7 +82,7 @@ export class GoogleTTSProvider extends EventEmitter implements TTSProvider {
       voice: { languageCode: 'en-US', name: 'en-US-Wavenet-D' },
       audioConfig: {
         audioEncoding: 'MP3',
-        speakingRate: 0.85
+        speakingRate: 0.9
       },
     });
   
