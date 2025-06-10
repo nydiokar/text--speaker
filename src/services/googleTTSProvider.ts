@@ -19,6 +19,7 @@ export class GoogleTTSProvider extends EventEmitter implements TTSProvider {
   private currentSentenceIndex: number = 0;
   private currentProcess: ChildProcess | null = null;
   private currentTempPath: string | null = null;
+  private resolveSpeakPromise: (() => void) | null = null;
 
   constructor() {
     super();
@@ -45,13 +46,21 @@ export class GoogleTTSProvider extends EventEmitter implements TTSProvider {
     this.currentSentences = this.splitIntoSentences(text);
     this.currentSentenceIndex = 0;
     this.currentState = 'playing';
-    this.speakCurrentSentence();
+    
+    return new Promise((resolve) => {
+        this.resolveSpeakPromise = resolve;
+        this.speakCurrentSentence();
+    });
   }
 
   private async speakCurrentSentence(): Promise<void> {
     if (this.currentState !== 'playing' || this.currentSentenceIndex >= this.currentSentences.length) {
       this.currentState = 'stopped';
       this.emit('done');
+      if (this.resolveSpeakPromise) {
+          this.resolveSpeakPromise();
+          this.resolveSpeakPromise = null;
+      }
       return;
     }
   
@@ -59,16 +68,24 @@ export class GoogleTTSProvider extends EventEmitter implements TTSProvider {
   
     try {
       await this.speakText(text);
+      // If we are still playing, move to the next sentence
       if (this.currentState === 'playing') {
-        // Add a small pause between sentences for better comprehension
         await new Promise(resolve => setTimeout(resolve, 350));
         this.currentSentenceIndex++;
-        this.speakCurrentSentence();
+        this.speakCurrentSentence(); // Continue the loop
       }
     } catch (error) {
+        // This block is entered when ffplay is killed or exits with an error.
+        // It acts as the signal handler for the state machine.
         if (this.currentState === 'playing') {
-            console.error('Error during playback:', error);
-            this.currentState = 'stopped';
+            // This happens on forward/rewind. The index is already updated, so we just continue the loop.
+            this.speakCurrentSentence();
+        } else {
+            // This happens on a hard stop or a real error. We resolve the master promise.
+            if (this.resolveSpeakPromise) {
+                this.resolveSpeakPromise();
+                this.resolveSpeakPromise = null;
+            }
         }
     }
   }
@@ -99,9 +116,10 @@ export class GoogleTTSProvider extends EventEmitter implements TTSProvider {
 
       this.currentProcess.on('close', (code) => {
         this.cleanupTempFile().then(() => {
-          if (code === 0 || this.currentState === 'stopped') {
+          if (code === 0) {
             resolve();
           } else {
+            // A non-zero exit code will trigger the catch block in speakCurrentSentence
             reject(new Error(`ffplay exited with code ${code}`));
           }
         });
@@ -147,20 +165,23 @@ export class GoogleTTSProvider extends EventEmitter implements TTSProvider {
       this.currentProcess.kill('SIGKILL');
       this.currentProcess = null;
     }
-    // The 'close' event on the process will handle cleanup, but we also clean up here
-    // to ensure no dangling files on an abrupt stop.
     await this.cleanupTempFile();
     this.currentSentences = [];
     this.currentSentenceIndex = 0;
+    
+    // Explicitly resolve the main promise on stop
+    if (this.resolveSpeakPromise) {
+        this.resolveSpeakPromise();
+        this.resolveSpeakPromise = null;
+    }
     return true;
   }
 
   async pause(): Promise<boolean> {
     if (this.currentState !== 'playing' || !this.currentProcess) return false;
-    // On Windows, SIGSTOP is not supported. We kill the process and set the state.
+    this.currentState = 'paused';
     this.currentProcess.kill('SIGKILL');
     this.currentProcess = null;
-    this.currentState = 'paused';
     console.log("Playback paused.");
     return true;
   }
@@ -169,30 +190,36 @@ export class GoogleTTSProvider extends EventEmitter implements TTSProvider {
     if (this.currentState !== 'paused') return false;
     this.currentState = 'playing';
     console.log("Resuming playback...");
-    // Re-speak the current sentence.
+    // The main loop will be kicked off from the current index.
     this.speakCurrentSentence();
     return true;
   }
   
   async forward(): Promise<boolean> {
-    if (this.currentState !== 'playing' && this.currentState !== 'paused') return false;
+    if (this.currentState === 'stopped') return false;
     if (this.currentSentenceIndex < this.currentSentences.length - 1) {
-        await this.stop();
-        this.currentState = 'playing';
         this.currentSentenceIndex++;
-        this.speakCurrentSentence();
+        if (this.currentProcess) {
+            // Killing the process will trigger the catch block in speakCurrentSentence,
+            // which will then call speakCurrentSentence again with the new index.
+            this.currentProcess.kill('SIGKILL');
+        } else if (this.currentState === 'paused') {
+            this.resume();
+        }
         return true;
     }
     return false;
   }
 
   async rewind(): Promise<boolean> {
-    if (this.currentState !== 'playing' && this.currentState !== 'paused') return false;
+    if (this.currentState === 'stopped') return false;
     if (this.currentSentenceIndex > 0) {
-        await this.stop();
-        this.currentState = 'playing';
         this.currentSentenceIndex--;
-        this.speakCurrentSentence();
+        if (this.currentProcess) {
+            this.currentProcess.kill('SIGKILL');
+        } else if (this.currentState === 'paused') {
+            this.resume();
+        }
         return true;
     }
     return false;
