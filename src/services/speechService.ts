@@ -1,13 +1,18 @@
 import { EventEmitter } from 'events';
 import { TTSProvider } from './ttsProvider';
-import { WindowsTTSProvider } from './windowsTTSProvider';
+// import { WindowsTTSProvider } from './windowsTTSProvider'; // No longer default
+import { GoogleTTSProvider } from './googleTTSProvider';
 
 export class SpeechService extends EventEmitter {
   private ttsProvider: TTSProvider;
 
-  constructor(provider: TTSProvider = new WindowsTTSProvider()) {
+  constructor(provider: TTSProvider = new GoogleTTSProvider()) {
     super();
     this.ttsProvider = provider;
+    // Forward events from the provider
+    if (this.ttsProvider instanceof EventEmitter) {
+      this.ttsProvider.on('done', () => this.emit('done'));
+    }
   }
 
   public get isPaused(): boolean {

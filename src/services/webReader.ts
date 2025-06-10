@@ -2,13 +2,13 @@ import axios from 'axios';
 import * as cheerio from 'cheerio';
 
 export class WebReader {
-  public async readWebPage(url: string): Promise<string> {
+  public static async read(url: string): Promise<string> {
     try {
       console.log('Fetching content from:', url);
       
       // First check if it's a Google Doc
       if (url.includes('docs.google.com')) {
-        return await this.readGoogleDoc(url);
+        return await WebReader.readGoogleDoc(url);
       }
 
       // Original web scraping logic remains intact
@@ -26,7 +26,7 @@ export class WebReader {
       $('.ads').remove();
 
       // Try to get the main content first
-      let content = this.extractMainContent($);
+      let content = WebReader.extractMainContent($);
 
       // If no main content found, fall back to body text
       if (!content.trim()) {
@@ -34,14 +34,14 @@ export class WebReader {
       }
 
       // Clean up the text
-      return this.cleanupText(content);
+      return WebReader.cleanupText(content);
     } catch (error) {
       console.error('Failed to read web page:', error);
       throw new Error(`Failed to read web page: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 
-  private extractMainContent($: cheerio.CheerioAPI): string {
+  private static extractMainContent($: cheerio.CheerioAPI): string {
     const possibleContentSelectors = [
       'article',
       '[role="main"]',
@@ -64,7 +64,7 @@ export class WebReader {
     return '';
   }
 
-  private cleanupText(text: string): string {
+  private static cleanupText(text: string): string {
     return text
       .replace(/\s+/g, ' ')        // Replace multiple spaces with single space
       .replace(/\n\s*\n/g, '\n\n') // Replace multiple newlines with double newline
@@ -73,10 +73,10 @@ export class WebReader {
   }
 
   // Google Docs specific methods
-  private async readGoogleDoc(url: string): Promise<string> {
+  private static async readGoogleDoc(url: string): Promise<string> {
     try {
       // Convert viewing URL to export URL
-      const docId = this.extractGoogleDocId(url);
+      const docId = WebReader.extractGoogleDocId(url);
       if (!docId) {
         throw new Error('Invalid Google Docs URL');
       }
@@ -98,7 +98,7 @@ export class WebReader {
     }
   }
 
-  private extractGoogleDocId(url: string): string | null {
+  private static extractGoogleDocId(url: string): string | null {
     // Handle different Google Docs URL formats
     const patterns = [
       /\/document\/d\/([a-zA-Z0-9-_]+)/,

@@ -1,10 +1,10 @@
-import { readFile } from 'fs/promises';
+import { promises as fs } from 'fs';
 import { extname } from 'path';
 
 export class FileReader {
   private static readonly SUPPORTED_EXTENSIONS = new Set(['.txt', '.md']);
 
-  public async readTextFile(filePath: string): Promise<string> {
+  public static async read(filePath: string): Promise<string> {
     const extension = extname(filePath).toLowerCase();
     
     if (!FileReader.SUPPORTED_EXTENSIONS.has(extension)) {
@@ -12,7 +12,7 @@ export class FileReader {
     }
 
     try {
-      const content = await readFile(filePath, 'utf-8');
+      const content = await fs.readFile(filePath, 'utf-8');
       return content;
     } catch (error) {
       throw new Error(`Failed to read file: ${error instanceof Error ? error.message : String(error)}`);

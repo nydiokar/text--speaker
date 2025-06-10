@@ -9,6 +9,7 @@ export class MenuInterface {
   private speechService: SpeechService;
   private fileReader: FileReader;
   private webReader: WebReader;
+  private currentPath: string | null = null;
 
   constructor() {
     this.rl = readline.createInterface({
@@ -58,7 +59,7 @@ export class MenuInterface {
   private async handleFileReading(): Promise<void> {
     try {
       const filePath = await this.question('Enter the path to your text file: ');
-      const content = await this.fileReader.readTextFile(filePath);
+      const content = await FileReader.read(filePath);
       await this.handlePlayback(content);
     } catch (error) {
       console.error('Error:', error instanceof Error ? error.message : String(error));
@@ -69,7 +70,7 @@ export class MenuInterface {
     try {
       const url = await this.question('Enter the webpage URL: ');
       console.log('\nFetching webpage content...');
-      const content = await this.webReader.readWebPage(url);
+      const content = await WebReader.read(url);
       await this.handlePlayback(content);
     } catch (error) {
       console.error('Error:', error instanceof Error ? error.message : String(error));
@@ -115,10 +116,14 @@ export class MenuInterface {
     }
   }
 
-
   private question(query: string): Promise<string> {
     return new Promise((resolve) => {
       this.rl.question(query, (answer) => resolve(answer));
     });
+  }
+
+  private isFilePath(path: string): boolean {
+    // Implement your logic to determine if a path is a file path
+    return path.endsWith('.txt') || path.endsWith('.pdf');
   }
 }

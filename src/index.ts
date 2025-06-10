@@ -23,7 +23,7 @@ console.log('Fetching content from:', url);
 
 async function main() {
   try {
-    const content = await webReader.readWebPage(url);
+    const content = await WebReader.read(url);
     console.log('\nStarting playback...');
 
     await Promise.all([
