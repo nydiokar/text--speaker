@@ -1,5 +1,5 @@
 /** @jsxImportSource @emotion/react */
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { css, ThemeProvider } from '@emotion/react';
 import { Settings, Voice } from './types';
 import { themeStyles } from './theme';
@@ -37,6 +37,8 @@ const controlsStyles = (theme: 'light' | 'dark') => css`
   display: flex;
   gap: 1rem;
   align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
 `;
 
 const dropZoneStyles = (theme: 'light' | 'dark') => css`
@@ -127,63 +129,58 @@ export const App: React.FC = () => {
     };
     init();
 
-    // Listen for speech state changes
-    const handleStateChange = (event: CustomEvent<'stopped' | 'playing' | 'paused'>) => {
-      console.log('Speech state changed:', event.detail);
-      setStatus(event.detail);
-    };
+    // Set up state change listener
+    const unsubscribe = window.api.onStateChange((event) => {
+      console.log('Speech state changed:', event);
+      setStatus(event.state);
+      if (event.error) {
+        console.error('Speech error:', event.error);
+      }
+    });
 
-    window.addEventListener('speech-state-change', handleStateChange as EventListener);
+    // Set up error listener
+    const unsubscribeError = window.api.onError((error) => {
+      console.error('Speech error:', error);
+      setStatus('stopped');
+    });
+
     return () => {
-      window.removeEventListener('speech-state-change', handleStateChange as EventListener);
+      unsubscribe();
+      unsubscribeError();
     };
   }, []);
 
-  const handlePlay = async () => {
-    if (!text || status === 'playing') return;
+  const handlePlay = useCallback(async () => {
+    if (!text) return;
     
     try {
-      await window.api.speak(text, selectedVoice);
-      // State will be updated via the state change event
+      if (status === 'stopped') {
+        // Only stop and restart if we're in stopped state
+        await window.api.controlPlayback('stop');
+        await window.api.speak(text, selectedVoice);
+      } else {
+        // Otherwise just control playback
+        await window.api.controlPlayback('play');
+      }
     } catch (error) {
       console.error('Play error:', error);
       setStatus('stopped');
     }
-  };
+  }, [text, selectedVoice, status]);
 
-  const handlePause = async () => {
-    if (status !== 'playing') return;
+  const handleControl = useCallback(async (action: 'play' | 'pause' | 'stop' | 'rewind' | 'forward' | 'replay', sentences?: number) => {
+    if (action === 'play' && status === 'stopped') {
+      await handlePlay();
+      return;
+    }
     
     try {
-      await window.api.controlPlayback('pause');
-      // State will be updated via the state change event
+      await window.api.controlPlayback(action, sentences);
     } catch (error) {
-      console.error('Pause error:', error);
+      console.error('Control error:', error);
       setStatus('stopped');
     }
-  };
-
-  const handleResume = async () => {
-    if (status !== 'paused') return;
-    
-    try {
-      await window.api.controlPlayback('play');
-      // State will be updated via the state change event
-    } catch (error) {
-      console.error('Resume error:', error);
-      setStatus('stopped');
-    }
-  };
-
-  const handleStop = async () => {
-    try {
-      await window.api.controlPlayback('stop');
-      // State will be updated via the state change event
-    } catch (error) {
-      console.error('Stop error:', error);
-      setStatus('stopped');
-    }
-  };
+  }, [status, handlePlay]);
 
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
@@ -192,7 +189,7 @@ export const App: React.FC = () => {
       const reader = new FileReader();
       reader.onload = async (event) => {
         if (status !== 'stopped') {
-          await handleStop();
+          await handleControl('stop');
         }
         setText(event.target?.result as string || '');
       };
@@ -202,7 +199,7 @@ export const App: React.FC = () => {
 
   const handleVoiceChange = async (event: React.ChangeEvent<HTMLSelectElement>) => {
     if (status !== 'stopped') {
-      await handleStop();
+      await handleControl('stop');
     }
     const voice = event.target.value;
     setSelectedVoice(voice);
@@ -265,18 +262,45 @@ export const App: React.FC = () => {
         </main>
 
         <div css={controlsStyles(settings.theme)}>
-          {status === 'stopped' && (
-            <button 
-              onClick={handlePlay}
-              css={buttonStyles(settings.theme)}
-              disabled={!text.trim()}
-            >
-              Play
-            </button>
+          {/* Navigation controls */}
+          {status !== 'stopped' && (
+            <>
+              <button 
+                onClick={() => handleControl('rewind', 1)}
+                css={buttonStyles(settings.theme)}
+                title="Rewind"
+              >
+                ⏪
+              </button>
+              <button 
+                onClick={() => handleControl('replay')}
+                css={buttonStyles(settings.theme)}
+                title="Replay"
+              >
+                🔄
+              </button>
+              <button 
+                onClick={() => handleControl('forward', 1)}
+                css={buttonStyles(settings.theme)}
+                title="Forward"
+              >
+                ⏩
+              </button>
+            </>
           )}
+
+          {/* Playback controls */}
+          <button 
+            onClick={handlePlay}
+            css={buttonStyles(settings.theme)}
+            disabled={!text.trim()}
+          >
+            {status === 'stopped' ? 'Play' : 'Restart'}
+          </button>
+          
           {status === 'playing' && (
             <button 
-              onClick={handlePause}
+              onClick={() => handleControl('pause')}
               css={buttonStyles(settings.theme)}
             >
               Pause
@@ -284,7 +308,7 @@ export const App: React.FC = () => {
           )}
           {status === 'paused' && (
             <button 
-              onClick={handleResume}
+              onClick={() => handleControl('play')}
               css={buttonStyles(settings.theme)}
             >
               Resume
@@ -292,7 +316,7 @@ export const App: React.FC = () => {
           )}
           {status !== 'stopped' && (
             <button 
-              onClick={handleStop}
+              onClick={() => handleControl('stop')}
               css={buttonStyles(settings.theme)}
             >
               Stop

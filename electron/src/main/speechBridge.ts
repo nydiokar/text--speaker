@@ -1,47 +1,117 @@
-import * as path from 'path';
-import * as nodeProcess from 'process';
+import { app } from 'electron';
 import { ChildProcess } from 'child_process';
 import { SpeechService } from '../../../src/services/speechService';
-import type { Voice } from '../renderer/types';
+import type { PlaybackState } from '../renderer/types';
+import { EventEmitter } from 'events';
 
-export class SpeechBridge {
-  private speechService: SpeechService;
+interface StateData {
+  sentenceIndex: number;
+}
+
+interface StateChangeEvent {
+  state: PlaybackState;
+  data: StateData;
+  error?: Error;
+}
+
+export class SpeechBridge extends EventEmitter {
+  private speechService!: SpeechService;
   private isInitialized: boolean = false;
-  private currentVoice: string | undefined;
-  private rootDir: string;
+  private isCleaning: boolean = false;
+  private currentState: PlaybackState = 'stopped';
+  private stateData: StateData = {
+    sentenceIndex: 0
+  };
+  private cleanupHandlers: (() => void)[] = [];
+  private isProcessing: boolean = false;
 
   constructor() {
+    super();
     console.log('Initializing SpeechBridge...');
     try {
-      this.rootDir = path.resolve(__dirname, '../../..');
-      nodeProcess.chdir(this.rootDir);
-
-      const tempDir = path.join(this.rootDir, 'temp_speech');
-      if (!require('fs').existsSync(tempDir)) {
-        require('fs').mkdirSync(tempDir, { recursive: true });
-      }
-
-      this.speechService = new SpeechService();
-      this.isInitialized = true;
-      console.log('SpeechBridge initialized with available methods:', 
-        Object.getOwnPropertyNames(SpeechService.prototype));
+      this.initializeSpeechService();
+      this.setupCleanupHandlers();
+      console.log('SpeechBridge initialized successfully');
     } catch (error) {
       console.error('Failed to initialize SpeechBridge:', error);
       throw error;
     }
   }
 
-  private ensureInitialized() {
-    if (!this.isInitialized || !this.speechService) {
-      nodeProcess.chdir(this.rootDir);
-      this.speechService = new SpeechService();
-      this.isInitialized = true;
-    }
+  private initializeSpeechService() {
+    this.speechService = new SpeechService();
+    
+    // Map service states to UI states
+    this.speechService.on('stateChanged', (event: any) => {
+      let uiState: PlaybackState = 'stopped';
+      
+      switch (event.newState) {
+        case 'playing':
+          uiState = 'playing';
+          break;
+        case 'paused':
+          uiState = 'paused';
+          break;
+        case 'stopped':
+          uiState = 'stopped';
+          break;
+      }
+
+      this.currentState = uiState;
+      this.stateData = { ...event.data };
+      
+      this.emit('stateChanged', {
+        state: uiState,
+        data: this.stateData,
+        error: event.error
+      });
+    });
+
+    this.isInitialized = true;
   }
 
-  async getVoices(): Promise<Voice[]> {
-    this.ensureInitialized();
-    return this.speechService.getVoices();
+  private setupCleanupHandlers() {
+    const beforeQuitHandler = async () => {
+      console.log('Before quit detected, starting cleanup...');
+      await this.cleanup();
+    };
+    app.on('before-quit', beforeQuitHandler);
+    this.cleanupHandlers.push(() => app.removeListener('before-quit', beforeQuitHandler));
+
+    const willQuitHandler = async () => {
+      console.log('Will quit detected, ensuring cleanup...');
+      await this.cleanup();
+    };
+    app.on('will-quit', willQuitHandler);
+    this.cleanupHandlers.push(() => app.removeListener('will-quit', willQuitHandler));
+
+    const windowAllClosedHandler = async () => {
+      console.log('All windows closed, cleaning up...');
+      await this.cleanup();
+      if (process.platform !== 'darwin') {
+        app.quit();
+      }
+    };
+    app.on('window-all-closed', windowAllClosedHandler);
+    this.cleanupHandlers.push(() => app.removeListener('window-all-closed', windowAllClosedHandler));
+
+    process.on('SIGTERM', async () => {
+      console.log('SIGTERM received, cleaning up...');
+      await this.cleanup();
+      process.exit(0);
+    });
+
+    process.on('SIGINT', async () => {
+      console.log('SIGINT received, cleaning up...');
+      await this.cleanup();
+      process.exit(0);
+    });
+  }
+
+  private ensureInitialized() {
+    if (!this.isInitialized || !this.speechService) {
+      this.initializeSpeechService();
+    }
   }
 
   getCurrentProcess(): ChildProcess | null {
@@ -49,57 +119,143 @@ export class SpeechBridge {
   }
 
   get isPaused(): boolean {
-    return this.speechService.isPaused;
+    return this.currentState === 'paused';
   }
 
-  async speak(text: string, voice?: string): Promise<boolean> {
-    console.log('speak called:', { text: text.substring(0, 50) + '...', voice });
-    try {
-      this.ensureInitialized();
-      nodeProcess.chdir(this.rootDir);
+  get isActive(): boolean {
+    return this.currentState === 'playing' || this.currentState === 'paused';
+  }
 
-      const speechProcess = await this.speechService.speak(text, voice);
-      return speechProcess !== null;
+  async speak(text: string): Promise<boolean> {
+    if (this.isCleaning || this.isProcessing) {
+      return false;
+    }
+    
+    try {
+      this.isProcessing = true;
+      console.log('speak called:', { text: text.substring(0, 50) + '...' });
+      this.ensureInitialized();
+      await this.speechService.speak(text);
+      return true;
     } catch (error) {
       console.error('speak error:', error);
+      this.emit('error', error);
       return false;
+    } finally {
+      this.isProcessing = false;
     }
   }
 
   async pause(): Promise<boolean> {
+    if (this.isCleaning || this.currentState !== 'playing' || this.isProcessing) {
+      return false;
+    }
+
     try {
+      this.isProcessing = true;
       this.ensureInitialized();
       return await this.speechService.pause();
     } catch (error) {
       console.error('pause error:', error);
+      this.emit('error', error);
       return false;
+    } finally {
+      this.isProcessing = false;
     }
   }
 
   async resume(): Promise<boolean> {
+    if (this.isCleaning || this.currentState !== 'paused' || this.isProcessing) {
+      return false;
+    }
+
     try {
+      this.isProcessing = true;
       this.ensureInitialized();
       return await this.speechService.resume();
     } catch (error) {
       console.error('resume error:', error);
+      this.emit('error', error);
       return false;
+    } finally {
+      this.isProcessing = false;
     }
   }
 
   async stop(): Promise<boolean> {
+    if (this.currentState === 'stopped' || this.isProcessing) {
+      return true;
+    }
+
     try {
+      this.isProcessing = true;
       this.ensureInitialized();
       return await this.speechService.stop();
     } catch (error) {
       console.error('stop error:', error);
+      this.emit('error', error);
       return false;
+    } finally {
+      this.isProcessing = false;
+    }
+  }
+
+  async rewind(): Promise<boolean> {
+    if (this.isCleaning || !this.isActive || this.isProcessing) {
+      return false;
+    }
+
+    try {
+      this.isProcessing = true;
+      this.ensureInitialized();
+      return await this.speechService.rewind();
+    } catch (error) {
+      console.error('rewind error:', error);
+      this.emit('error', error);
+      return false;
+    } finally {
+      this.isProcessing = false;
+    }
+  }
+
+  async forward(): Promise<boolean> {
+    if (this.isCleaning || !this.isActive || this.isProcessing) {
+      return false;
+    }
+
+    try {
+      this.isProcessing = true;
+      this.ensureInitialized();
+      return await this.speechService.forward();
+    } catch (error) {
+      console.error('forward error:', error);
+      this.emit('error', error);
+      return false;
+    } finally {
+      this.isProcessing = false;
     }
   }
 
   async cleanup(): Promise<void> {
-    if (this.isInitialized) {
-      await this.stop();
-      this.isInitialized = false;
+    if (this.isCleaning) return;
+    
+    this.isCleaning = true;
+    console.log('Starting cleanup...');
+
+    try {
+      if (this.isInitialized) {
+        await this.stop();
+        this.cleanupHandlers.forEach(handler => handler());
+        this.cleanupHandlers = [];
+        this.speechService.removeAllListeners();
+        this.isInitialized = false;
+      }
+    } catch (error) {
+      console.error('Cleanup error:', error);
+      this.emit('error', error);
+    } finally {
+      this.isCleaning = false;
+      console.log('Cleanup completed');
     }
   }
 }

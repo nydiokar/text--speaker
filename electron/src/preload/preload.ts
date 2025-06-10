@@ -1,45 +1,48 @@
 import { contextBridge, ipcRenderer } from 'electron';
+import { Voice, Settings, PlaybackAction, StateChangeEvent } from '../renderer/types';
 
-console.log('Initializing preload script...');
-
-try {
-  console.log('Setting up API bridge...');
-  
-  contextBridge.exposeInMainWorld('api', {
-    getVoices: () => {
-      console.log('Requesting voices...');
-      return ipcRenderer.invoke('get-voices');
-    },
-    speak: (text: string, voice?: string) => {
-      console.log('Requesting speech:', { text: text.substring(0, 100) + '...', voice });
-      return ipcRenderer.invoke('speak-text', text, voice);
-    },
-    controlPlayback: (action: 'play' | 'pause' | 'stop') => {
-      console.log('Controlling playback:', action);
-      return ipcRenderer.invoke('control-playback', action);
-    },
-    getSettings: () => {
-      console.log('Requesting settings...');
-      return ipcRenderer.invoke('get-settings');
-    },
-    saveSettings: (settings: any) => {
-      console.log('Saving settings:', settings);
-      return ipcRenderer.invoke('save-settings', settings);
-    }
-  });
-
-  console.log('API bridge exposed successfully');
-} catch (error) {
-  console.error('Failed to expose API:', error);
+declare global {
+  interface Window {
+    api: {
+      getVoices: () => Promise<Voice[]>;
+      speak: (text: string, voice?: string) => Promise<void>;
+      controlPlayback: (action: PlaybackAction, sentences?: number) => Promise<void>;
+      onStateChange: (callback: (event: StateChangeEvent) => void) => () => void;
+      onError: (callback: (error: Error) => void) => () => void;
+      getSettings: () => Promise<Settings>;
+      saveSettings: (settings: Settings) => Promise<void>;
+    };
+  }
 }
 
-// Listen for speech state changes
-ipcRenderer.on('speech-state-change', (_, state: 'stopped' | 'playing' | 'paused') => {
-  console.log('Speech state changed:', state);
-  // Notify any listeners in the renderer
-  window.dispatchEvent(new CustomEvent('speech-state-change', { detail: state }));
-});
+// IPC wrapper
+contextBridge.exposeInMainWorld('api', {
+  getVoices: () => ipcRenderer.invoke('speech:getVoices'),
+  
+  speak: (text: string, voice?: string) => 
+    ipcRenderer.invoke('speech:speak', text, voice),
+  
+  controlPlayback: (action: PlaybackAction, sentences?: number) => 
+    ipcRenderer.invoke('speech:control', action, sentences),
+  
+  onStateChange: (callback: (event: StateChangeEvent) => void) => {
+    const subscription = (_: any, event: StateChangeEvent) => callback(event);
+    ipcRenderer.on('speech:stateChanged', subscription);
+    return () => {
+      ipcRenderer.removeListener('speech:stateChanged', subscription);
+    };
+  },
 
-document.addEventListener('DOMContentLoaded', () => {
-  console.log('Preload script: DOM content loaded');
+  onError: (callback: (error: Error) => void) => {
+    const subscription = (_: any, error: Error) => callback(error);
+    ipcRenderer.on('speech:error', subscription);
+    return () => {
+      ipcRenderer.removeListener('speech:error', subscription);
+    };
+  },
+
+  getSettings: () => ipcRenderer.invoke('settings:get'),
+  
+  saveSettings: (settings: Settings) => 
+    ipcRenderer.invoke('settings:save', settings)
 });

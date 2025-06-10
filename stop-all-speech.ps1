@@ -1,49 +1,68 @@
-Write-Host "Stopping all speech-related processes..."
+Write-Host "Emergency Stop: Terminating ALL related processes..."
 
-# Get all PowerShell processes running speech scripts
-$speechProcesses = Get-Process | Where-Object { 
-    $_.Name -eq 'powershell' -and 
-    ($_.CommandLine -match 'speech-script' -or 
-     $_.CommandLine -match 'temp_speech' -or 
-     $_.CommandLine -match 'speech.pid')
+# Kill any powershell processes related to speech
+Get-Process powershell* | Where-Object {
+    $_.MainWindowTitle -match 'speech' -or
+    $_.CommandLine -match 'speech' -or
+    $_.CommandLine -match 'System.Speech'
+} | ForEach-Object {
+    Write-Host "Killing PowerShell process: $($_.Id)"
+    Stop-Process -Id $_.Id -Force
 }
 
-if ($speechProcesses) {
-    $speechProcesses | ForEach-Object {
-        try {
-            Write-Host "Stopping process $($_.Id)..."
-            Stop-Process -Id $_.Id -Force
-        } catch {
-            Write-Error "Failed to stop process $($_.Id): $_"
-        }
-    }
-} else {
-    Write-Host "No speech processes found."
+# Kill any electron processes that might be running our app
+Get-Process | Where-Object {
+    $_.Name -like '*electron*' -or
+    $_.Name -like '*node*'
+} | ForEach-Object {
+    Write-Host "Killing process: $($_.Name) ($($_.Id))"
+    Stop-Process -Id $_.Id -Force
 }
 
-# Clean up temp files
-$tempDir = "temp_speech"
-if (Test-Path $tempDir) {
-    Write-Host "Cleaning up temp files..."
-    Get-ChildItem -Path $tempDir -File | ForEach-Object {
-        try {
-            Remove-Item $_.FullName -Force
-            Write-Host "Removed $($_.Name)"
-        } catch {
-            Write-Error "Failed to remove $($_.Name): $_"
-        }
-    }
-}
-
-Write-Host "Cleanup complete"
-
-# Release any speech synthesizer instances
-$script = {
+# Kill speech synthesizer and related processes
+Try {
     Add-Type -AssemblyName System.Speech
-    $null = New-Object System.Speech.Synthesis.SpeechSynthesizer
-    [System.GC]::Collect()
-    [System.GC]::WaitForPendingFinalizers()
+    $synth = New-Object System.Speech.Synthesis.SpeechSynthesizer
+    $synth.SpeakAsyncCancelAll()
+    $synth.Dispose()
+} Catch {
+    Write-Host "Error disposing speech synthesizer: $_"
 }
-PowerShell -Command $script
 
-Write-Host "Speech resources released"
+# Kill any remaining speech processes
+Get-Process | Where-Object {
+    $_.Name -like '*speech*' -or
+    $_.Name -eq 'sapi' -or 
+    $_.Name -eq 'TTSService' -or
+    $_.Name -eq 'SpeechRuntime' -or
+    $_.Name -like '*SpeechSynthesizer*' -or
+    $_.Name -like '*Speech_OneCore*' -or
+    $_.Name -like '*conhost*'
+} | ForEach-Object {
+    Write-Host "Killing speech process: $($_.Name) ($($_.Id))"
+    Try {
+        Stop-Process -Id $_.Id -Force
+    } Catch {
+        Write-Host "Failed to kill process $($_.Name): $_"
+    }
+}
+
+# Clean up temp directory
+if (Test-Path "temp_speech") {
+    Write-Host "Cleaning temp directory..."
+    Remove-Item -Path "temp_speech\*" -Force
+}
+if (Test-Path $env:TEMP) {
+    Get-ChildItem -Path $env:TEMP -Filter "speech_*" | Remove-Item -Force
+}
+
+# Force garbage collection
+[System.GC]::Collect()
+[System.GC]::WaitForPendingFinalizers()
+
+# Clear speech registry
+Write-Host "Resetting speech system..."
+reg delete "HKEY_CURRENT_USER\Software\Microsoft\Speech" /f
+reg delete "HKEY_CURRENT_USER\Software\Microsoft\Speech_OneCore" /f
+
+Write-Host "Emergency stop complete. All related processes should be terminated."

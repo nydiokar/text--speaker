@@ -6,8 +6,8 @@ import { PlayerInterface } from './services/playerInterface';
 const url = process.argv[2];
 
 if (!url) {
-  console.log('Usage: node . <url>');
-  console.log('Example: node . https://example.com\n');
+  console.log('Usage: node cli.js <url>');
+  console.log('Example: node cli.js https://example.com\n');
   console.log('Controls:');
   console.log('  [space] - Pause/Resume');
   console.log('  [←/→]  - Previous/Next sentence');

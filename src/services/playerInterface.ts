@@ -13,21 +13,22 @@ export class PlayerInterface {
     this.isActive = true;
     console.log('\nPlayback Controls:');
     console.log('  [space] - Pause/Resume');
-    console.log('  [q] - Quit\n');
-
+    console.log('  [←/→]  - Previous/Next sentence');
+    console.log('  [q]    - Quit\n');
+    
     readline.emitKeypressEvents(process.stdin);
     if (process.stdin.isTTY) {
       process.stdin.setRawMode(true);
     }
 
     return new Promise<void>((resolve) => {
-      const keypressHandler = async (str: string, key: any) => {
+      const keypressHandler = async (_: string, key: any) => {
         if ((key.ctrl && key.name === 'c') || key.name === 'q') {
-          await this.quit();
+          await this.stop();
           cleanup();
           resolve();
         } else {
-          await this.handleKeyPress(str, key);
+          await this.handleKeyPress(key);
         }
       };
 
@@ -43,7 +44,7 @@ export class PlayerInterface {
     });
   }
 
-  private async handleKeyPress(str: string | undefined, key: any): Promise<void> {
+  private async handleKeyPress(key: any): Promise<void> {
     if (!key || !this.isActive) return;
 
     switch (key.name) {
@@ -57,13 +58,21 @@ export class PlayerInterface {
         }
         break;
 
+      case 'right':
+        await this.speechService.forward();
+        break;
+
+      case 'left':
+        await this.speechService.rewind();
+        break;
+
       case 'q':
-        await this.quit();
+        await this.stop();
         break;
     }
   }
 
-  private async quit(): Promise<void> {
+  private async stop(): Promise<void> {
     if (!this.isActive) return;
     console.log('\nStopping playback...');
     this.isActive = false;
