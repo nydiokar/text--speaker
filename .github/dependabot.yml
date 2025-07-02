@@ -1,135 +1,41 @@
 version: 2
 updates:
-  # Root directory npm dependencies - includes security updates
+  # Root directory npm dependencies
   - package-ecosystem: "npm"
     directory: "/"
     schedule:
       interval: "daily"
       time: "08:00"
       timezone: "America/New_York"
-    open-pull-requests-limit: 8
+    open-pull-requests-limit: 10
     reviewers:
       - "nydiokar"
-    assignees:
-      - "nydiokar"
-    commit-message:
-      prefix: "chore"
-      prefix-development: "chore"
-      include: "scope"
     labels:
       - "dependencies"
-      - "npm"
-    # Group updates to reduce PR volume
-    groups:
-      security-updates:
-        patterns:
-          - "*"
-        update-types:
-          - "security"
-      dev-dependencies:
-        patterns:
-          - "@types/*"
-          - "typescript"
-          - "ts-node"
-          - "@typescript-eslint/*"
-          - "eslint*"
-          - "prettier"
-          - "jest"
-          - "mocha"
-          - "chai"
-        update-types:
-          - "minor"
-          - "patch"
-      production-dependencies:
-        patterns:
-          - "*"
-        exclude-patterns:
-          - "@types/*"
-          - "typescript"
-          - "ts-node"
-          - "@typescript-eslint/*"
-          - "eslint*"
-          - "prettier"
-          - "jest"
-          - "mocha"
-          - "chai"
-        update-types:
-          - "minor"
-          - "patch"
-    rebase-strategy: "auto"
-    versioning-strategy: "increase-if-necessary"
 
-  # Electron directory npm dependencies - includes security updates
+  # Electron directory npm dependencies  
   - package-ecosystem: "npm"
     directory: "/electron"
     schedule:
       interval: "daily"
       time: "08:00"
       timezone: "America/New_York"
-    open-pull-requests-limit: 8
+    open-pull-requests-limit: 10
     reviewers:
       - "nydiokar"
-    assignees:
-      - "nydiokar"
-    commit-message:
-      prefix: "chore(electron)"
-      prefix-development: "chore(electron)"
-      include: "scope"
     labels:
       - "dependencies"
-      - "npm"
       - "electron"
-    groups:
-      security-updates:
-        patterns:
-          - "*"
-        update-types:
-          - "security"
-      electron-framework:
-        patterns:
-          - "electron"
-          - "electron-*"
-        update-types:
-          - "minor"
-          - "patch"
-      electron-dev-dependencies:
-        patterns:
-          - "@types/*"
-          - "typescript"
-          - "@typescript-eslint/*"
-          - "eslint*"
-        update-types:
-          - "minor"
-          - "patch"
-      electron-ui-dependencies:
-        patterns:
-          - "react"
-          - "react-*"
-          - "@emotion/*"
-        update-types:
-          - "minor"
-          - "patch"
-    rebase-strategy: "auto"
-    versioning-strategy: "increase-if-necessary"
 
-  # GitHub Actions updates
+  # GitHub Actions
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
-      interval: "monthly"
-      day: "monday"
+      interval: "weekly"
       time: "08:00"
       timezone: "America/New_York"
-    open-pull-requests-limit: 3
+    open-pull-requests-limit: 5
     reviewers:
       - "nydiokar"
-    assignees:
-      - "nydiokar"
-    commit-message:
-      prefix: "chore(ci)"
-      include: "scope"
     labels:
-      - "dependencies"
-      - "github-actions"
-      - "ci"
-    rebase-strategy: "auto" 
+      - "dependencies" 
