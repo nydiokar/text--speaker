@@ -1,14 +1,13 @@
 version: 2
 updates:
-  # Enable version updates for npm dependencies in root directory
+  # Root directory npm dependencies - includes security updates
   - package-ecosystem: "npm"
     directory: "/"
     schedule:
-      interval: "weekly"
-      day: "monday"
+      interval: "daily"
       time: "08:00"
       timezone: "America/New_York"
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 8
     reviewers:
       - "nydiokar"
     assignees:
@@ -22,6 +21,11 @@ updates:
       - "npm"
     # Group updates to reduce PR volume
     groups:
+      security-updates:
+        patterns:
+          - "*"
+        update-types:
+          - "security"
       dev-dependencies:
         patterns:
           - "@types/*"
@@ -52,20 +56,17 @@ updates:
         update-types:
           - "minor"
           - "patch"
-    # Rebase PRs automatically to keep them current
     rebase-strategy: "auto"
-    # Only update to secure versions for major updates
     versioning-strategy: "increase-if-necessary"
 
-  # Enable version updates for npm dependencies in electron directory
+  # Electron directory npm dependencies - includes security updates
   - package-ecosystem: "npm"
     directory: "/electron"
     schedule:
-      interval: "weekly"
-      day: "monday"
+      interval: "daily"
       time: "08:00"
       timezone: "America/New_York"
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 8
     reviewers:
       - "nydiokar"
     assignees:
@@ -78,8 +79,12 @@ updates:
       - "dependencies"
       - "npm"
       - "electron"
-    # Group electron-specific updates
     groups:
+      security-updates:
+        patterns:
+          - "*"
+        update-types:
+          - "security"
       electron-framework:
         patterns:
           - "electron"
@@ -107,59 +112,7 @@ updates:
     rebase-strategy: "auto"
     versioning-strategy: "increase-if-necessary"
 
-  # Security updates - more frequent for critical fixes
-  - package-ecosystem: "npm"
-    directory: "/"
-    schedule:
-      interval: "daily"
-      time: "09:00"
-      timezone: "America/New_York"
-    open-pull-requests-limit: 3
-    reviewers:
-      - "nydiokar"
-    assignees:
-      - "nydiokar"
-    commit-message:
-      prefix: "security"
-      include: "scope"
-    labels:
-      - "security"
-      - "dependencies"
-      - "npm"
-    # Only security updates
-    allow:
-      - dependency-type: "direct"
-        update-type: "security"
-      - dependency-type: "indirect"
-        update-type: "security"
-
-  # Security updates for electron directory
-  - package-ecosystem: "npm"
-    directory: "/electron"
-    schedule:
-      interval: "daily"
-      time: "09:00"
-      timezone: "America/New_York"
-    open-pull-requests-limit: 3
-    reviewers:
-      - "nydiokar"
-    assignees:
-      - "nydiokar"
-    commit-message:
-      prefix: "security(electron)"
-      include: "scope"
-    labels:
-      - "security"
-      - "dependencies"
-      - "npm"
-      - "electron"
-    allow:
-      - dependency-type: "direct"
-        update-type: "security"
-      - dependency-type: "indirect"
-        update-type: "security"
-
-  # Enable version updates for GitHub Actions
+  # GitHub Actions updates
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
