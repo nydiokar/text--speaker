@@ -26,7 +26,7 @@ A command-line text-to-speech application that uses Windows' built-in speech syn
 
 1. Clone the repository:
 ```bash
-git clone [repository-url]
+git clone https://github.com/nydiokar/text--speaker.git
 cd speaker-ai
 ```
 
@@ -48,14 +48,8 @@ The application can be used in two ways:
 
 Simply run the application without any arguments:
 ```bash
-npm run start
+npm run start 
 ```
-
-This will start an interactive menu where you can:
-1. Choose what to read (file, web content, or direct text)
-2. Input the necessary details (file path, URL, or text)
-3. Optionally select a voice
-4. Control playback using keyboard commands
 
 ### 2. Command Line Mode
 
@@ -92,12 +86,12 @@ npm run start say "Hello, this is a test message"
 To read content from a webpage:
 
 ```bash
-npm run start read-web <url>
+npm run start <url>
 ```
 
 Example:
 ```bash
-npm run start read-web "https://example.com/article"
+npm run start https://github.com/nydiokar/text--speaker/blob/master/README.md
 ```
 
 The command will:
