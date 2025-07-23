@@ -20,6 +20,8 @@ export class GoogleTTSProvider extends EventEmitter implements TTSProvider {
   private currentProcess: ChildProcess | null = null;
   private currentTempPath: string | null = null;
   private resolveSpeakPromise: (() => void) | null = null;
+  private errorCount: number = 0;
+  private readonly maxErrors: number = 3;
 
   constructor() {
     super();
@@ -46,6 +48,7 @@ export class GoogleTTSProvider extends EventEmitter implements TTSProvider {
     this.currentSentences = this.splitIntoSentences(text);
     this.currentSentenceIndex = 0;
     this.currentState = 'playing';
+    this.errorCount = 0; // Reset error count for new speech session
     
     return new Promise((resolve) => {
         this.resolveSpeakPromise = resolve;
@@ -78,7 +81,22 @@ export class GoogleTTSProvider extends EventEmitter implements TTSProvider {
         // This block is entered when ffplay is killed or exits with an error.
         // It acts as the signal handler for the state machine.
         if (this.currentState === 'playing') {
-            // This happens on forward/rewind. The index is already updated, so we just continue the loop.
+            this.errorCount++;
+            console.error(`Error speaking sentence ${this.currentSentenceIndex} (attempt ${this.errorCount}):`, error);
+            
+            // Safety mechanism to prevent infinite loops
+            if (this.errorCount >= this.maxErrors) {
+                console.error(`Too many errors (${this.errorCount}), stopping speech`);
+                this.currentState = 'stopped';
+                if (this.resolveSpeakPromise) {
+                    this.resolveSpeakPromise();
+                    this.resolveSpeakPromise = null;
+                }
+                return;
+            }
+            
+            // Move to next sentence to avoid infinite loops
+            this.currentSentenceIndex++;
             this.speakCurrentSentence();
         } else {
             // This happens on a hard stop or a real error. We resolve the master promise.
@@ -168,6 +186,7 @@ export class GoogleTTSProvider extends EventEmitter implements TTSProvider {
     await this.cleanupTempFile();
     this.currentSentences = [];
     this.currentSentenceIndex = 0;
+    this.errorCount = 0; // Reset error count
     
     // Explicitly resolve the main promise on stop
     if (this.resolveSpeakPromise) {

@@ -20,7 +20,7 @@ const createWindow = () => {
   if (app.isPackaged) {
     mainWindow.loadFile(path.join(__dirname, '../../index.html'));
   } else {
-    mainWindow.loadFile(path.join(__dirname, '../../../index.html'));
+    mainWindow.loadFile(path.join(__dirname, '../../index.html'));
   }
 
   mainWindow.on('closed', () => {
@@ -45,11 +45,12 @@ const initializeServices = () => {
 
   // Handle IPC calls
   ipcMain.handle('speech:getVoices', () => {
-    return speechBridge?.getVoices();
+    // Return empty array for now - Windows TTS doesn't expose voice list through this interface
+    return [];
   });
 
-  ipcMain.handle('speech:speak', async (_, text: string, voice?: string) => {
-    return speechBridge?.speak(text, voice);
+  ipcMain.handle('speech:speak', async (_, text: string) => {
+    return speechBridge?.speak(text);
   });
 
   ipcMain.handle('speech:control', async (_, action: PlaybackAction, sentences?: number) => {
@@ -66,9 +67,9 @@ const initializeServices = () => {
       case 'stop':
         return speechBridge.stop();
       case 'rewind':
-        return speechBridge.rewind(sentences);
+        return speechBridge.rewind();
       case 'forward':
-        return speechBridge.forward(sentences);
+        return speechBridge.forward();
       case 'replay':
         await speechBridge.stop();
         if (speechBridge.isPaused) {

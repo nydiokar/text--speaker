@@ -1,8 +1,10 @@
 import { app } from 'electron';
 import { ChildProcess } from 'child_process';
 import { SpeechService } from '../../../src/services/speechService';
+import { WindowsTTSProvider } from '../../../src/services/windowsTTSProvider';
 import type { PlaybackState } from '../renderer/types';
 import { EventEmitter } from 'events';
+import * as path from 'path';
 
 interface StateData {
   sentenceIndex: number;
@@ -29,6 +31,11 @@ export class SpeechBridge extends EventEmitter {
     super();
     console.log('Initializing SpeechBridge...');
     try {
+      // Set Google Cloud credentials path for Electron app
+      const credentialsPath = path.join(__dirname, '../../../google-credentials.json');
+      process.env.GOOGLE_APPLICATION_CREDENTIALS = credentialsPath;
+      console.log('Set GOOGLE_APPLICATION_CREDENTIALS to:', credentialsPath);
+      
       this.initializeSpeechService();
       this.setupCleanupHandlers();
       console.log('SpeechBridge initialized successfully');
@@ -39,7 +46,8 @@ export class SpeechBridge extends EventEmitter {
   }
 
   private initializeSpeechService() {
-    this.speechService = new SpeechService();
+    // Use Windows TTS provider for Electron app - no external dependencies needed
+    this.speechService = new SpeechService(new WindowsTTSProvider());
     
     // Map service states to UI states
     this.speechService.on('stateChanged', (event: any) => {
