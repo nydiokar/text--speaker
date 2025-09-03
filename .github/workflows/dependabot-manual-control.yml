@@ -9,10 +9,11 @@ on:
         default: 'merge-all'
         type: choice
         options:
-        - merge-all
-        - rebase-all
-        - close-all
-        - list-pending
+         - merge-all
+         - rebase-all
+         - close-all
+         - list-pending
+         - aggressive-cleanup
       dry_run:
         description: 'Dry run (no actual changes)'
         required: false
@@ -81,12 +82,19 @@ jobs:
              
              console.log(`Processing ${dependabotPRs.length} Dependabot PRs (dry run: ${dryRun})`);
              
+             const results = {
+               attempted: 0,
+               merged: 0,
+               failed: 0,
+               skipped: 0
+             };
+             
              for (const pr of dependabotPRs) {
-               console.log(`Checking PR #${pr.number}: ${pr.title}`);
-               console.log(`  - mergeable: ${pr.mergeable}`);
-               console.log(`  - mergeable_state: ${pr.mergeable_state}`);
-               console.log(`  - state: ${pr.state}`);
-               console.log(`  - draft: ${pr.draft}`);
+               console.log(`\n=== Processing PR #${pr.number}: ${pr.title} ===`);
+               console.log(`  - Created: ${pr.created_at}`);
+               console.log(`  - Updated: ${pr.updated_at}`);
+               console.log(`  - Head: ${pr.head.ref}`);
+               console.log(`  - Base: ${pr.base.ref}`);
                
                // Get fresh PR data to ensure we have current merge status
                const { data: freshPR } = await github.rest.pulls.get({
@@ -97,43 +105,99 @@ jobs:
                
                console.log(`  - Fresh data - mergeable: ${freshPR.mergeable}, state: ${freshPR.mergeable_state}`);
                
-               // Only skip if explicitly blocked or draft
-               const shouldSkip = freshPR.mergeable === false || 
-                                 freshPR.mergeable_state === 'blocked' ||
-                                 freshPR.draft === true;
+               // Check if PR is too old (older than 30 days) and might be stale
+               const prAge = new Date() - new Date(pr.created_at);
+               const isOld = prAge > (30 * 24 * 60 * 60 * 1000); // 30 days in ms
                
-               if (!shouldSkip) {
-                 if (!dryRun) {
+               if (isOld) {
+                 console.log(`  ⚠️ PR is ${Math.round(prAge / (24 * 60 * 60 * 1000))} days old - might be stale`);
+               }
+               
+               // Try to merge regardless of mergeable status - let GitHub tell us
+               results.attempted++;
+               
+               if (!dryRun) {
+                 try {
+                   console.log(`🔄 Attempting to merge PR #${pr.number}...`);
+                   
+                   const mergeResult = await github.rest.pulls.merge({
+                     owner: context.repo.owner,
+                     repo: context.repo.repo,
+                     pull_number: pr.number,
+                     merge_method: 'squash',
+                     commit_title: pr.title,
+                     commit_message: 'Auto-merged by Dependabot automation'
+                   });
+                   
+                   console.log(`✅ Successfully merged PR #${pr.number}`);
+                   console.log(`  - Merge SHA: ${mergeResult.data.sha}`);
+                   results.merged++;
+                   
+                   // Delete the branch after successful merge
                    try {
-                     console.log(`🔄 Attempting to merge PR #${pr.number}...`);
-                     await github.rest.pulls.merge({
+                     await github.rest.git.deleteRef({
                        owner: context.repo.owner,
                        repo: context.repo.repo,
-                       pull_number: pr.number,
-                       merge_method: 'squash',
-                       commit_title: pr.title,
-                       commit_message: 'Auto-merged by manual control workflow'
+                       ref: `heads/${pr.head.ref}`
                      });
-                     console.log(`✅ Successfully merged PR #${pr.number}`);
-                   } catch (error) {
-                     console.log(`❌ Failed to merge PR #${pr.number}: ${error.message}`);
-                     
-                     // Try to provide more helpful error information
-                     if (error.status === 405) {
-                       console.log(`  → PR cannot be merged (405 error - likely conflicts or not ready)`);
-                     } else if (error.status === 422) {
-                       console.log(`  → PR merge validation failed (422 error)`);
-                     } else {
-                       console.log(`  → HTTP ${error.status}: ${error.message}`);
+                     console.log(`🗑️ Deleted branch: ${pr.head.ref}`);
+                   } catch (deleteError) {
+                     console.log(`⚠️ Could not delete branch ${pr.head.ref}: ${deleteError.message}`);
+                   }
+                   
+                 } catch (error) {
+                   console.log(`❌ Failed to merge PR #${pr.number}: ${error.message}`);
+                   results.failed++;
+                   
+                   // Provide detailed error information
+                   if (error.status === 405) {
+                     console.log(`  → PR cannot be merged (405 error - likely conflicts or not ready)`);
+                   } else if (error.status === 422) {
+                     console.log(`  → PR merge validation failed (422 error)`);
+                     if (error.response?.data?.message) {
+                       console.log(`  → Details: ${error.response.data.message}`);
+                     }
+                   } else {
+                     console.log(`  → HTTP ${error.status}: ${error.message}`);
+                   }
+                   
+                   // If merge fails due to conflicts, try to close the PR
+                   if (error.status === 405 || error.status === 422) {
+                     try {
+                       await github.rest.pulls.update({
+                         owner: context.repo.owner,
+                         repo: context.repo.repo,
+                         pull_number: pr.number,
+                         state: 'closed'
+                       });
+                       console.log(`🔒 Closed unmergeable PR #${pr.number}`);
+                       
+                       // Delete the branch for closed PRs too
+                       try {
+                         await github.rest.git.deleteRef({
+                           owner: context.repo.owner,
+                           repo: context.repo.repo,
+                           ref: `heads/${pr.head.ref}`
+                         });
+                         console.log(`🗑️ Deleted branch: ${pr.head.ref}`);
+                       } catch (deleteError) {
+                         console.log(`⚠️ Could not delete branch ${pr.head.ref}: ${deleteError.message}`);
+                       }
+                     } catch (closeError) {
+                       console.log(`⚠️ Could not close PR #${pr.number}: ${closeError.message}`);
                      }
                    }
-                 } else {
-                   console.log(`[DRY RUN] Would attempt to merge PR #${pr.number}: ${pr.title}`);
                  }
                } else {
-                 console.log(`⏭️ Skipped PR #${pr.number}: mergeable=${freshPR.mergeable}, state=${freshPR.mergeable_state}, draft=${freshPR.draft}`);
+                 console.log(`[DRY RUN] Would attempt to merge PR #${pr.number}: ${pr.title}`);
                }
              }
+             
+             console.log(`\n=== SUMMARY ===`);
+             console.log(`Total PRs processed: ${results.attempted}`);
+             console.log(`Successfully merged: ${results.merged}`);
+             console.log(`Failed to merge: ${results.failed}`);
+             console.log(`Skipped: ${results.skipped}`);
             
       - name: Rebase All PRs
         if: github.event.inputs.action == 'rebase-all'
@@ -219,6 +283,60 @@ jobs:
                  console.log(`[DRY RUN] Would close PR #${pr.number}: ${pr.title}`);
                }
              }
+            
+      - name: Aggressive Cleanup
+        if: github.event.inputs.action == 'aggressive-cleanup'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            // Get all Dependabot PRs
+            const { data: prs } = await github.rest.pulls.list({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open'
+            });
+            
+            const dependabotPRs = prs.filter(pr => 
+              pr.user.login === 'dependabot[bot]' || 
+              pr.head.ref.startsWith('dependabot/')
+            );
+            
+            const dryRun = '${{ github.event.inputs.dry_run }}' === 'true';
+            
+            console.log(`Aggressive cleanup of ${dependabotPRs.length} Dependabot PRs (dry run: ${dryRun})`);
+            
+            for (const pr of dependabotPRs) {
+              console.log(`\n=== Aggressive cleanup of PR #${pr.number}: ${pr.title} ===`);
+              
+              if (!dryRun) {
+                // First, try to close the PR
+                try {
+                  await github.rest.pulls.update({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    pull_number: pr.number,
+                    state: 'closed'
+                  });
+                  console.log(`🔒 Closed PR #${pr.number}`);
+                } catch (error) {
+                  console.log(`❌ Failed to close PR #${pr.number}: ${error.message}`);
+                }
+                
+                // Then delete the branch
+                try {
+                  await github.rest.git.deleteRef({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    ref: `heads/${pr.head.ref}`
+                  });
+                  console.log(`🗑️ Deleted branch: ${pr.head.ref}`);
+                } catch (error) {
+                  console.log(`⚠️ Could not delete branch ${pr.head.ref}: ${error.message}`);
+                }
+              } else {
+                console.log(`[DRY RUN] Would close PR #${pr.number} and delete branch ${pr.head.ref}`);
+              }
+            }
             
       - name: Summary
         run: |
