@@ -8,10 +8,18 @@ updates:
       time: "08:00"
       timezone: "America/New_York"
     open-pull-requests-limit: 10
-    reviewers:
-      - "nydiokar"
+    # Remove reviewers to allow auto-merge
+    # reviewers:
+    #   - "nydiokar"
     labels:
       - "dependencies"
+    # Enable auto-merge for minor and patch updates
+    allow:
+      - dependency-type: "all"
+    # Auto-merge configuration
+    commit-message:
+      prefix: "chore"
+      include: "scope"
 
   # Electron directory npm dependencies  
   - package-ecosystem: "npm"
@@ -21,11 +29,19 @@ updates:
       time: "08:00"
       timezone: "America/New_York"
     open-pull-requests-limit: 10
-    reviewers:
-      - "nydiokar"
+    # Remove reviewers to allow auto-merge
+    # reviewers:
+    #   - "nydiokar"
     labels:
       - "dependencies"
       - "electron"
+    # Enable auto-merge for minor and patch updates
+    allow:
+      - dependency-type: "all"
+    # Auto-merge configuration
+    commit-message:
+      prefix: "chore"
+      include: "scope"
 
   # GitHub Actions
   - package-ecosystem: "github-actions"
@@ -35,7 +51,15 @@ updates:
       time: "08:00"
       timezone: "America/New_York"
     open-pull-requests-limit: 5
-    reviewers:
-      - "nydiokar"
+    # Remove reviewers to allow auto-merge
+    # reviewers:
+    #   - "nydiokar"
     labels:
-      - "dependencies" 
+      - "dependencies"
+    # Enable auto-merge for minor and patch updates
+    allow:
+      - dependency-type: "all"
+    # Auto-merge configuration
+    commit-message:
+      prefix: "chore"
+      include: "scope" 

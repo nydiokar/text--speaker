@@ -20,8 +20,7 @@ export class GoogleTTSProvider extends EventEmitter implements TTSProvider {
   private currentProcess: ChildProcess | null = null;
   private currentTempPath: string | null = null;
   private resolveSpeakPromise: (() => void) | null = null;
-  private errorCount: number = 0;
-  private readonly maxErrors: number = 3;
+  private isProcessExiting: boolean = false;
 
   constructor() {
     super();
@@ -48,7 +47,7 @@ export class GoogleTTSProvider extends EventEmitter implements TTSProvider {
     this.currentSentences = this.splitIntoSentences(text);
     this.currentSentenceIndex = 0;
     this.currentState = 'playing';
-    this.errorCount = 0; // Reset error count for new speech session
+    this.isProcessExiting = false;
     
     return new Promise((resolve) => {
         this.resolveSpeakPromise = resolve;
@@ -78,24 +77,11 @@ export class GoogleTTSProvider extends EventEmitter implements TTSProvider {
         this.speakCurrentSentence(); // Continue the loop
       }
     } catch (error) {
-        // This block is entered when ffplay is killed or exits with an error.
-        // It acts as the signal handler for the state machine.
+        // Handle ffplay errors more gracefully - just skip to next sentence
         if (this.currentState === 'playing') {
-            this.errorCount++;
-            console.error(`Error speaking sentence ${this.currentSentenceIndex} (attempt ${this.errorCount}):`, error);
-            
-            // Safety mechanism to prevent infinite loops
-            if (this.errorCount >= this.maxErrors) {
-                console.error(`Too many errors (${this.errorCount}), stopping speech`);
-                this.currentState = 'stopped';
-                if (this.resolveSpeakPromise) {
-                    this.resolveSpeakPromise();
-                    this.resolveSpeakPromise = null;
-                }
-                return;
-            }
-            
-            // Move to next sentence to avoid infinite loops
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            console.warn(`Skipping sentence ${this.currentSentenceIndex} due to playback error:`, errorMessage);
+            // Move to next sentence and continue
             this.currentSentenceIndex++;
             this.speakCurrentSentence();
         } else {
@@ -130,23 +116,69 @@ export class GoogleTTSProvider extends EventEmitter implements TTSProvider {
 
     return new Promise((resolve, reject) => {
       const args = ['-nodisp', '-autoexit', '-i', this.currentTempPath as string];
-      this.currentProcess = spawn(ffplay.default, args);
+      this.currentProcess = spawn(ffplay.default, args, {
+        stdio: 'ignore', // Reduce noise from ffplay
+        windowsHide: true // Hide the ffplay window on Windows
+      });
 
-      this.currentProcess.on('close', (code) => {
+      let hasResolved = false;
+      let timeoutId: NodeJS.Timeout | null = null;
+
+      const cleanup = () => {
+        if (hasResolved) return;
+        hasResolved = true;
+        if (timeoutId) {
+          clearTimeout(timeoutId);
+          timeoutId = null;
+        }
         this.cleanupTempFile().then(() => {
-          if (code === 0) {
+          if (!this.isProcessExiting) {
             resolve();
-          } else {
-            // A non-zero exit code will trigger the catch block in speakCurrentSentence
-            reject(new Error(`ffplay exited with code ${code}`));
           }
         });
+      };
+
+      // Add a timeout to prevent hanging
+      timeoutId = setTimeout(() => {
+        if (!hasResolved) {
+          hasResolved = true;
+          if (this.currentProcess) {
+            this.currentProcess.kill('SIGKILL');
+          }
+          this.cleanupTempFile().then(() => {
+            reject(new Error('ffplay timeout - process took too long'));
+          });
+        }
+      }, 30000); // 30 second timeout
+
+      this.currentProcess.on('close', (code) => {
+        // Handle null exit code (process killed) more gracefully
+        if (code === null || code === 0) {
+          cleanup();
+        } else {
+          if (!hasResolved) {
+            hasResolved = true;
+            this.cleanupTempFile().then(() => {
+              reject(new Error(`ffplay exited with code ${code}`));
+            });
+          }
+        }
       });
 
       this.currentProcess.on('error', (err) => {
-        this.cleanupTempFile().then(() => {
-          reject(err);
-        });
+        if (!hasResolved) {
+          hasResolved = true;
+          this.cleanupTempFile().then(() => {
+            reject(err);
+          });
+        }
+      });
+
+      // Handle process exit more gracefully
+      this.currentProcess.on('exit', (code) => {
+        if (code === null || code === 0) {
+          cleanup();
+        }
       });
     });
   }
@@ -178,6 +210,7 @@ export class GoogleTTSProvider extends EventEmitter implements TTSProvider {
   }
 
   async stop(): Promise<boolean> {
+    this.isProcessExiting = true;
     this.currentState = 'stopped';
     if (this.currentProcess) {
       this.currentProcess.kill('SIGKILL');
@@ -186,7 +219,6 @@ export class GoogleTTSProvider extends EventEmitter implements TTSProvider {
     await this.cleanupTempFile();
     this.currentSentences = [];
     this.currentSentenceIndex = 0;
-    this.errorCount = 0; // Reset error count
     
     // Explicitly resolve the main promise on stop
     if (this.resolveSpeakPromise) {
@@ -219,8 +251,6 @@ export class GoogleTTSProvider extends EventEmitter implements TTSProvider {
     if (this.currentSentenceIndex < this.currentSentences.length - 1) {
         this.currentSentenceIndex++;
         if (this.currentProcess) {
-            // Killing the process will trigger the catch block in speakCurrentSentence,
-            // which will then call speakCurrentSentence again with the new index.
             this.currentProcess.kill('SIGKILL');
         } else if (this.currentState === 'paused') {
             this.resume();

@@ -1,0 +1,163 @@
+name: Dependabot Manual Control
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'Action to perform'
+        required: true
+        default: 'merge-all'
+        type: choice
+        options:
+        - merge-all
+        - rebase-all
+        - close-all
+        - list-pending
+      dry_run:
+        description: 'Dry run (no actual changes)'
+        required: false
+        default: false
+        type: boolean
+
+jobs:
+  manual-control:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        
+      - name: List Dependabot PRs
+        id: list-prs
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { data: prs } = await github.rest.pulls.list({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              head: 'dependabot/npm_and_yarn'
+            });
+            
+            const dependabotPRs = prs.filter(pr => 
+              pr.user.login === 'dependabot[bot]' || 
+              pr.head.ref.startsWith('dependabot/')
+            );
+            
+            console.log(`Found ${dependabotPRs.length} Dependabot PRs`);
+            
+            for (const pr of dependabotPRs) {
+              console.log(`- #${pr.number}: ${pr.title} (${pr.mergeable_state})`);
+            }
+            
+            return {
+              count: dependabotPRs.length,
+              prs: dependabotPRs.map(pr => ({
+                number: pr.number,
+                title: pr.title,
+                mergeable_state: pr.mergeable_state,
+                mergeable: pr.mergeable
+              }))
+            };
+            
+      - name: Merge All PRs
+        if: github.event.inputs.action == 'merge-all'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const prs = ${{ toJson(steps.list-prs.outputs.prs) }};
+            const dryRun = '${{ github.event.inputs.dry_run }}' === 'true';
+            
+            console.log(`Processing ${prs.length} PRs (dry run: ${dryRun})`);
+            
+            for (const pr of prs) {
+              if (pr.mergeable && pr.mergeable_state === 'clean') {
+                if (!dryRun) {
+                  try {
+                    await github.rest.pulls.merge({
+                      owner: context.repo.owner,
+                      repo: context.repo.repo,
+                      pull_number: pr.number,
+                      merge_method: 'squash',
+                      commit_title: pr.title,
+                      commit_message: 'Auto-merged by manual control workflow'
+                    });
+                    console.log(`✅ Merged PR #${pr.number}`);
+                  } catch (error) {
+                    console.log(`❌ Failed to merge PR #${pr.number}: ${error.message}`);
+                  }
+                } else {
+                  console.log(`[DRY RUN] Would merge PR #${pr.number}: ${pr.title}`);
+                }
+              } else {
+                console.log(`⏭️ Skipped PR #${pr.number}: ${pr.mergeable_state}`);
+              }
+            }
+            
+      - name: Rebase All PRs
+        if: github.event.inputs.action == 'rebase-all'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const prs = ${{ toJson(steps.list-prs.outputs.prs) }};
+            const dryRun = '${{ github.event.inputs.dry_run }}' === 'true';
+            
+            console.log(`Rebasing ${prs.length} PRs (dry run: ${dryRun})`);
+            
+            for (const pr of prs) {
+              if (pr.mergeable_state === 'dirty' || pr.mergeable_state === 'behind') {
+                if (!dryRun) {
+                  try {
+                    await github.rest.pulls.updateBranch({
+                      owner: context.repo.owner,
+                      repo: context.repo.repo,
+                      pull_number: pr.number
+                    });
+                    console.log(`🔄 Rebased PR #${pr.number}`);
+                  } catch (error) {
+                    console.log(`❌ Failed to rebase PR #${pr.number}: ${error.message}`);
+                  }
+                } else {
+                  console.log(`[DRY RUN] Would rebase PR #${pr.number}: ${pr.title}`);
+                }
+              } else {
+                console.log(`⏭️ No rebase needed for PR #${pr.number}`);
+              }
+            }
+            
+      - name: Close All PRs
+        if: github.event.inputs.action == 'close-all'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const prs = ${{ toJson(steps.list-prs.outputs.prs) }};
+            const dryRun = '${{ github.event.inputs.dry_run }}' === 'true';
+            
+            console.log(`Closing ${prs.length} PRs (dry run: ${dryRun})`);
+            
+            for (const pr of prs) {
+              if (!dryRun) {
+                try {
+                  await github.rest.pulls.update({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    pull_number: pr.number,
+                    state: 'closed'
+                  });
+                  console.log(`🔒 Closed PR #${pr.number}`);
+                } catch (error) {
+                  console.log(`❌ Failed to close PR #${pr.number}: ${error.message}`);
+                }
+              } else {
+                console.log(`[DRY RUN] Would close PR #${pr.number}: ${pr.title}`);
+              }
+            }
+            
+      - name: Summary
+        run: |
+          echo "## Dependabot PR Management Summary" >> $GITHUB_STEP_SUMMARY
+          echo "- **Action**: ${{ github.event.inputs.action }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Dry Run**: ${{ github.event.inputs.dry_run }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **PRs Found**: ${{ steps.list-prs.outputs.count }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Check the logs above for detailed results." >> $GITHUB_STEP_SUMMARY

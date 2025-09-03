@@ -1,0 +1,105 @@
+name: Dependabot Auto-rebase
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+  issue_comment:
+    types: [created]
+
+jobs:
+  auto-rebase:
+    runs-on: ubuntu-latest
+    if: |
+      (github.event_name == 'pull_request' && github.actor == 'dependabot[bot]') ||
+      (github.event_name == 'issue_comment' && github.actor == 'dependabot[bot]' && contains(github.event.comment.body, '@dependabot rebase'))
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+          
+      - name: Get PR details
+        id: pr
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const prNumber = context.issue.number;
+            const { data: pr } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: prNumber
+            });
+            
+            return {
+              number: pr.number,
+              title: pr.title,
+              mergeable_state: pr.mergeable_state,
+              head_sha: pr.head.sha,
+              base_sha: pr.base.sha
+            };
+            
+      - name: Check if rebase is needed
+        id: rebase-check
+        run: |
+          # Check if PR has conflicts or is behind
+          if [[ "${{ steps.pr.outputs.mergeable_state }}" == "dirty" ]]; then
+            echo "needed=true" >> $GITHUB_OUTPUT
+            echo "reason=PR has merge conflicts" >> $GITHUB_OUTPUT
+          elif [[ "${{ steps.pr.outputs.mergeable_state }}" == "behind" ]]; then
+            echo "needed=true" >> $GITHUB_OUTPUT
+            echo "reason=PR is behind base branch" >> $GITHUB_OUTPUT
+          else
+            echo "needed=false" >> $GITHUB_OUTPUT
+            echo "reason=No rebase needed" >> $GITHUB_OUTPUT
+          fi
+          
+      - name: Auto-rebase PR
+        if: steps.rebase-check.outputs.needed == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const prNumber = context.issue.number;
+            
+            try {
+              // Trigger dependabot rebase
+              await github.rest.pulls.updateBranch({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: prNumber
+              });
+              
+              console.log('Rebase triggered successfully');
+              
+              // Comment on the PR
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: prNumber,
+                body: '🔄 Auto-rebase triggered due to: ${{ steps.rebase-check.outputs.reason }}'
+              });
+              
+            } catch (error) {
+              console.log('Rebase failed:', error.message);
+              
+              // Comment about the failure
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: prNumber,
+                body: `❌ Auto-rebase failed: ${error.message}. Please rebase manually.`
+              });
+            }
+            
+      - name: Comment on successful rebase check
+        if: steps.rebase-check.outputs.needed == 'false'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: '✅ No rebase needed: ${{ steps.rebase-check.outputs.reason }}'
+            });

@@ -1,0 +1,132 @@
+name: Dependabot Auto-merge
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+
+jobs:
+  auto-merge:
+    runs-on: ubuntu-latest
+    if: github.actor == 'dependabot[bot]'
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        
+      - name: Get PR details
+        id: pr
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { data: pr } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.issue.number
+            });
+            
+            return {
+              title: pr.title,
+              body: pr.body,
+              mergeable: pr.mergeable,
+              mergeable_state: pr.mergeable_state,
+              draft: pr.draft,
+              labels: pr.labels.map(label => label.name)
+            };
+            
+      - name: Check if auto-merge is safe
+        id: safety-check
+        run: |
+          # Check if PR is from dependabot
+          if [[ "${{ github.actor }}" != "dependabot[bot]" ]]; then
+            echo "safe=false" >> $GITHUB_OUTPUT
+            echo "reason=Not a dependabot PR" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          
+          # Check if PR is draft
+          if [[ "${{ steps.pr.outputs.draft }}" == "true" ]]; then
+            echo "safe=false" >> $GITHUB_OUTPUT
+            echo "reason=PR is in draft state" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          
+          # Check if PR has conflicts
+          if [[ "${{ steps.pr.outputs.mergeable_state }}" == "dirty" ]]; then
+            echo "safe=false" >> $GITHUB_OUTPUT
+            echo "reason=PR has merge conflicts" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          
+          # Check if PR is mergeable
+          if [[ "${{ steps.pr.outputs.mergeable }}" != "true" ]]; then
+            echo "safe=false" >> $GITHUB_OUTPUT
+            echo "reason=PR is not mergeable" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          
+          # Check if it's a major version update (be more cautious)
+          if echo "${{ steps.pr.outputs.title }}" | grep -E "Bump.*from [0-9]+\.0\.0 to [0-9]+\.0\.0"; then
+            echo "safe=false" >> $GITHUB_OUTPUT
+            echo "reason=Major version update detected" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          
+          # Check if it's a breaking change
+          if echo "${{ steps.pr.outputs.body }}" | grep -i "breaking change\|breaking changes"; then
+            echo "safe=false" >> $GITHUB_OUTPUT
+            echo "reason=Breaking changes detected" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          
+          echo "safe=true" >> $GITHUB_OUTPUT
+          echo "reason=All safety checks passed" >> $GITHUB_OUTPUT
+          
+      - name: Wait for checks to complete
+        if: steps.safety-check.outputs.safe == 'true'
+        uses: lewagon/wait-on-check-action@v1.3.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          check-name: 'Dependabot Auto-merge'
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          wait-interval: 10
+          allowed-conclusions: success,skipped,neutral
+          
+      - name: Auto-merge PR
+        if: steps.safety-check.outputs.safe == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { data: pr } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.issue.number
+            });
+            
+            if (pr.mergeable && pr.mergeable_state === 'clean') {
+              await github.rest.pulls.merge({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: context.issue.number,
+                merge_method: 'squash',
+                commit_title: `${{ steps.pr.outputs.title }}`,
+                commit_message: 'Auto-merged by Dependabot automation'
+              });
+              
+              console.log('PR merged successfully');
+            } else {
+              console.log('PR is not ready for merge');
+            }
+            
+      - name: Comment on PR
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const message = `${{ steps.safety-check.outputs.safe == 'true' && '✅ Auto-merge check passed. PR will be merged automatically.' || '❌ Auto-merge skipped: ${{ steps.safety-check.outputs.reason }}' }}`;
+            
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: message
+            });
