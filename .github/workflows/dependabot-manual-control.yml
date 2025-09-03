@@ -82,11 +82,30 @@ jobs:
              console.log(`Processing ${dependabotPRs.length} Dependabot PRs (dry run: ${dryRun})`);
              
              for (const pr of dependabotPRs) {
-               console.log(`Checking PR #${pr.number}: ${pr.title} (${pr.mergeable_state})`);
+               console.log(`Checking PR #${pr.number}: ${pr.title}`);
+               console.log(`  - mergeable: ${pr.mergeable}`);
+               console.log(`  - mergeable_state: ${pr.mergeable_state}`);
+               console.log(`  - state: ${pr.state}`);
+               console.log(`  - draft: ${pr.draft}`);
                
-               if (pr.mergeable && pr.mergeable_state === 'clean') {
+               // Get fresh PR data to ensure we have current merge status
+               const { data: freshPR } = await github.rest.pulls.get({
+                 owner: context.repo.owner,
+                 repo: context.repo.repo,
+                 pull_number: pr.number
+               });
+               
+               console.log(`  - Fresh data - mergeable: ${freshPR.mergeable}, state: ${freshPR.mergeable_state}`);
+               
+               // Only skip if explicitly blocked or draft
+               const shouldSkip = freshPR.mergeable === false || 
+                                 freshPR.mergeable_state === 'blocked' ||
+                                 freshPR.draft === true;
+               
+               if (!shouldSkip) {
                  if (!dryRun) {
                    try {
+                     console.log(`🔄 Attempting to merge PR #${pr.number}...`);
                      await github.rest.pulls.merge({
                        owner: context.repo.owner,
                        repo: context.repo.repo,
@@ -95,15 +114,24 @@ jobs:
                        commit_title: pr.title,
                        commit_message: 'Auto-merged by manual control workflow'
                      });
-                     console.log(`✅ Merged PR #${pr.number}`);
+                     console.log(`✅ Successfully merged PR #${pr.number}`);
                    } catch (error) {
                      console.log(`❌ Failed to merge PR #${pr.number}: ${error.message}`);
+                     
+                     // Try to provide more helpful error information
+                     if (error.status === 405) {
+                       console.log(`  → PR cannot be merged (405 error - likely conflicts or not ready)`);
+                     } else if (error.status === 422) {
+                       console.log(`  → PR merge validation failed (422 error)`);
+                     } else {
+                       console.log(`  → HTTP ${error.status}: ${error.message}`);
+                     }
                    }
                  } else {
-                   console.log(`[DRY RUN] Would merge PR #${pr.number}: ${pr.title}`);
+                   console.log(`[DRY RUN] Would attempt to merge PR #${pr.number}: ${pr.title}`);
                  }
                } else {
-                 console.log(`⏭️ Skipped PR #${pr.number}: mergeable=${pr.mergeable}, state=${pr.mergeable_state}`);
+                 console.log(`⏭️ Skipped PR #${pr.number}: mergeable=${freshPR.mergeable}, state=${freshPR.mergeable_state}, draft=${freshPR.draft}`);
                }
              }
             
