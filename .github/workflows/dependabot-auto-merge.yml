@@ -96,25 +96,82 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
-            const { data: pr } = await github.rest.pulls.get({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              pull_number: context.issue.number
-            });
+            const prNumber = context.issue.number;
             
-            if (pr.mergeable && pr.mergeable_state === 'clean') {
-              await github.rest.pulls.merge({
+            try {
+              console.log(`🔄 Attempting to merge PR #${prNumber}...`);
+              
+              const mergeResult = await github.rest.pulls.merge({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
-                pull_number: context.issue.number,
+                pull_number: prNumber,
                 merge_method: 'squash',
                 commit_title: `${{ steps.pr.outputs.title }}`,
                 commit_message: 'Auto-merged by Dependabot automation'
               });
               
-              console.log('PR merged successfully');
-            } else {
-              console.log('PR is not ready for merge');
+              console.log(`✅ Successfully merged PR #${prNumber}`);
+              console.log(`Merge SHA: ${mergeResult.data.sha}`);
+              
+              // Delete the branch after successful merge
+              try {
+                const { data: pr } = await github.rest.pulls.get({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  pull_number: prNumber
+                });
+                
+                await github.rest.git.deleteRef({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  ref: `heads/${pr.head.ref}`
+                });
+                console.log(`🗑️ Deleted branch: ${pr.head.ref}`);
+              } catch (deleteError) {
+                console.log(`⚠️ Could not delete branch: ${deleteError.message}`);
+              }
+              
+            } catch (error) {
+              console.log(`❌ Failed to merge PR #${prNumber}: ${error.message}`);
+              
+              // Only close PRs that are truly unmergeable (not just conflicted)
+              if (error.status === 422 && error.message.includes('not mergeable')) {
+                console.log(`🔒 Closing unmergeable PR #${prNumber} (truly cannot be merged)`);
+                
+                try {
+                  await github.rest.pulls.update({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    pull_number: prNumber,
+                    state: 'closed'
+                  });
+                  
+                  // Delete the branch for truly unmergeable PRs
+                  try {
+                    const { data: pr } = await github.rest.pulls.get({
+                      owner: context.repo.owner,
+                      repo: context.repo.repo,
+                      pull_number: prNumber
+                    });
+                    
+                    await github.rest.git.deleteRef({
+                      owner: context.repo.owner,
+                      repo: context.repo.repo,
+                      ref: `heads/${pr.head.ref}`
+                    });
+                    console.log(`🗑️ Deleted branch: ${pr.head.ref}`);
+                  } catch (deleteError) {
+                    console.log(`⚠️ Could not delete branch: ${deleteError.message}`);
+                  }
+                } catch (closeError) {
+                  console.log(`⚠️ Could not close PR: ${closeError.message}`);
+                }
+              } else {
+                // For other errors (like conflicts), keep PR open for manual review
+                console.log(`📝 Keeping PR #${prNumber} open for manual review`);
+                console.log(`  → Error: ${error.message}`);
+                console.log(`  → Status: ${error.status}`);
+              }
             }
             
       - name: Comment on PR
@@ -122,7 +179,26 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
-            const message = `${{ steps.safety-check.outputs.safe == 'true' && '✅ Auto-merge check passed. PR will be merged automatically.' || '❌ Auto-merge skipped: ${{ steps.safety-check.outputs.reason }}' }}`;
+            let message;
+            
+            if ('${{ steps.safety-check.outputs.safe }}' === 'true') {
+              // Check if PR was actually merged by looking at the logs
+              const { data: pr } = await github.rest.pulls.get({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: context.issue.number
+              });
+              
+              if (pr.state === 'closed' && pr.merged_at) {
+                message = '✅ **Auto-merged successfully!** This PR has been automatically merged and the branch has been cleaned up.';
+              } else if (pr.state === 'closed' && !pr.merged_at) {
+                message = '🔒 **PR closed** - This PR was determined to be unmergeable and has been closed automatically.';
+              } else {
+                message = '📝 **PR kept open for manual review** - This PR has conflicts or other issues that require manual attention. Please review and resolve conflicts if needed.';
+              }
+            } else {
+              message = `❌ **Auto-merge skipped**: ${{ steps.safety-check.outputs.reason }}`;
+            }
             
             await github.rest.issues.createComment({
               owner: context.repo.owner,
