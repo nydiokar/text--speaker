@@ -30,7 +30,7 @@ jobs:
         
       - name: List Dependabot PRs
         id: list-prs
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           script: |
             const { data: prs } = await github.rest.pulls.list({
@@ -63,7 +63,7 @@ jobs:
             
       - name: Merge All PRs
         if: github.event.inputs.action == 'merge-all'
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           script: |
              // Get fresh PR data instead of relying on step outputs
@@ -201,7 +201,7 @@ jobs:
             
       - name: Rebase All PRs
         if: github.event.inputs.action == 'rebase-all'
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           script: |
              // Get fresh PR data instead of relying on step outputs
@@ -245,7 +245,7 @@ jobs:
             
       - name: Close All PRs
         if: github.event.inputs.action == 'close-all'
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           script: |
              // Get fresh PR data instead of relying on step outputs
@@ -286,7 +286,7 @@ jobs:
             
       - name: Aggressive Cleanup
         if: github.event.inputs.action == 'aggressive-cleanup'
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           script: |
             // Get all Dependabot PRs
