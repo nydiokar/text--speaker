@@ -4,18 +4,24 @@ updates:
   - package-ecosystem: "npm"
     directory: "/"
     schedule:
-      interval: "daily"
+      interval: "weekly"
+      day: "monday"
       time: "08:00"
       timezone: "America/New_York"
-    open-pull-requests-limit: 10
+    open-pull-requests-limit: 5
     # Remove reviewers to allow auto-merge
     # reviewers:
     #   - "nydiokar"
     labels:
       - "dependencies"
-    # Enable auto-merge for minor and patch updates
-    allow:
-      - dependency-type: "all"
+    # Group minor and patch updates together
+    groups:
+      minor-and-patch:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
     # Auto-merge configuration
     commit-message:
       prefix: "chore"
@@ -25,19 +31,25 @@ updates:
   - package-ecosystem: "npm"
     directory: "/electron"
     schedule:
-      interval: "daily"
+      interval: "weekly"
+      day: "monday"
       time: "08:00"
       timezone: "America/New_York"
-    open-pull-requests-limit: 10
+    open-pull-requests-limit: 5
     # Remove reviewers to allow auto-merge
     # reviewers:
     #   - "nydiokar"
     labels:
       - "dependencies"
       - "electron"
-    # Enable auto-merge for minor and patch updates
-    allow:
-      - dependency-type: "all"
+    # Group minor and patch updates together
+    groups:
+      minor-and-patch:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
     # Auto-merge configuration
     commit-message:
       prefix: "chore"

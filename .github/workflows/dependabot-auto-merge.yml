@@ -8,6 +8,10 @@ jobs:
   auto-merge:
     runs-on: ubuntu-latest
     if: github.actor == 'dependabot[bot]'
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
     
     steps:
       - name: Checkout
