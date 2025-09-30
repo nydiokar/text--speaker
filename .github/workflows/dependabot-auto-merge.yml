@@ -54,15 +54,21 @@ jobs:
             exit 0
           fi
           
-          # Check if PR has conflicts
+          # Only block if explicitly dirty or blocked (be lenient with unknown/null states)
           if [[ "${{ steps.pr.outputs.mergeable_state }}" == "dirty" ]]; then
             echo "safe=false" >> $GITHUB_OUTPUT
             echo "reason=PR has merge conflicts" >> $GITHUB_OUTPUT
             exit 0
           fi
           
-          # Check if PR is mergeable
-          if [[ "${{ steps.pr.outputs.mergeable }}" != "true" ]]; then
+          if [[ "${{ steps.pr.outputs.mergeable_state }}" == "blocked" ]]; then
+            echo "safe=false" >> $GITHUB_OUTPUT
+            echo "reason=PR is blocked" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          
+          # Only block if explicitly false (not if null/undefined)
+          if [[ "${{ steps.pr.outputs.mergeable }}" == "false" ]]; then
             echo "safe=false" >> $GITHUB_OUTPUT
             echo "reason=PR is not mergeable" >> $GITHUB_OUTPUT
             exit 0
