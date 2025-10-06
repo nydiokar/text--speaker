@@ -18,7 +18,7 @@
     "@types/electron": "^1.6.10",
     "@types/node": "^24.6.0",
     "@types/react": "^18.2.48",
-    "@types/react-dom": "^18.2.18",
+    "@types/react-dom": "^19.2.0",
     "cross-env": "^10.1.0",
     "electron": "^37.2.3",
     "electron-builder": "^26.0.12",
@@ -35,7 +35,7 @@
     "electron-store": "^11.0.0",
     "ffplay-static": "^3.2.2",
     "react": "^18.2.0",
-    "react-dom": "^18.2.0"
+    "react-dom": "^19.2.0"
   },
   "build": {
     "appId": "com.speaker-ai.app",
