@@ -20,7 +20,7 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "@google-cloud/text-to-speech": "^6.3.0",
+    "@google-cloud/text-to-speech": "^6.3.1",
     "axios": "^1.12.2",
     "cheerio": "^1.1.2",
     "commander": "^14.0.1",
@@ -30,10 +30,10 @@
   "devDependencies": {
     "@types/chai": "^5.0.0",
     "@types/mocha": "^10.0.6",
-    "@types/node": "^24.6.0",
+    "@types/node": "^24.8.1",
     "chai": "^6.2.0",
-    "mocha": "^11.7.3",
+    "mocha": "^11.7.4",
     "ts-node": "^10.9.2",
-    "typescript": "^5.9.2"
+    "typescript": "^5.9.3"
   }
 }
